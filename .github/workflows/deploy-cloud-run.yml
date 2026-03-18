@@ -8,9 +8,9 @@ on:
       - 'CloudRunFunction/**' # Only trigger if files in this folder change
 
 env:
-  PROJECT_ID: your-gcp-project-id   # TODO: Update with your project ID
+  PROJECT_ID: KSU-Team-2   # TODO: Update with your project ID
   REGION: us-central1               # TODO: Update with your GCP region
-  SERVICE: cloud-run-hello-world    # TODO: Update with your desired Cloud Run service name
+  SERVICE: bigquerry-to-lucidchart    # TODO: Update with your desired Cloud Run service name
 
 jobs:
   deploy:
