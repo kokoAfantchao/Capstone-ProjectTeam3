@@ -1,0 +1,61 @@
+name: Build and Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main # Trigger on pushes to the main branch
+    paths:
+      - 'CloudRunFunction/**' # Only trigger if files in this folder change
+
+env:
+  PROJECT_ID: your-gcp-project-id   # TODO: Update with your project ID
+  REGION: us-central1               # TODO: Update with your GCP region
+  SERVICE: cloud-run-hello-world    # TODO: Update with your desired Cloud Run service name
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    # Required for Workload Identity Federation
+    permissions:
+      contents: 'read'
+      id-token: 'write' 
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------------
+      # AUTHENTICATION (Choose ONE option below)
+      # ----------------------------------------------------------------------
+      
+      # OPTION 1: Workload Identity Federation (Recommended by Google)
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          # TODO: Update with your WIF provider and Service Account details
+          workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'my-service-account@your-gcp-project-id.iam.gserviceaccount.com'
+
+      # OPTION 2: Service Account JSON Key (Stored in GitHub Secrets)
+      # Uncomment this and comment out Option 1 if using a JSON key.
+      # - name: Authenticate to Google Cloud (JSON Key)
+      #   id: auth-json
+      #   uses: google-github-actions/auth@v2
+      #   with:
+      #     credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      # ----------------------------------------------------------------------
+      # DEPLOY
+      # ----------------------------------------------------------------------
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          source: ./CloudRunFunction # Path to your source code
+          
+      - name: Show Output
+        run: echo "Successfully deployed to ${{ steps.deploy.outputs.url }}"
