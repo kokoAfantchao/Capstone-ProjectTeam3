@@ -9,7 +9,9 @@ on:
 
 env:
   PROJECT_ID: KSU-Team-2   # TODO: Update with your project ID
-  REGION: us-central1               # TODO: Update with your GCP region
+  REGION: us-central1      # TODO: Update with your GCP region (fixed typo)
+  GAR_LOCATION: europe-west1 # TODO: Update with your Artifact Registry location
+  REPOSITORY: cloud-run-source-deploy # TODO: Create this repository in Artifact Registry before deploying
   SERVICE: bigquerry-to-lucidchart    # TODO: Update with your desired Cloud Run service name
 
 jobs:
@@ -30,21 +32,33 @@ jobs:
       # ----------------------------------------------------------------------
       
       # OPTION 1: Workload Identity Federation (Recommended by Google)
-      - name: Authenticate to Google Cloud (WIF)
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
+      # - name: Authenticate to Google Cloud (WIF)
+      #   id: auth
+      #   uses: google-github-actions/auth@v2
+      #   with:
           # TODO: Update with your WIF provider and Service Account details
-          workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'my-service-account@your-gcp-project-id.iam.gserviceaccount.com'
+          # workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          # service_account: 'my-service-account@your-gcp-project-id.iam.gserviceaccount.com'
 
       # OPTION 2: Service Account JSON Key (Stored in GitHub Secrets)
       # Uncomment this and comment out Option 1 if using a JSON key.
-      # - name: Authenticate to Google Cloud (JSON Key)
-      #   id: auth-json
-      #   uses: google-github-actions/auth@v2
-      #   with:
-      #     credentials_json: '${{ secrets.GCP_SA_KEY }}'
+      - name: Authenticate to Google Cloud (JSON Key)
+        id: auth-json
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{secrets.GCP_SA_KEY }}'
+
+      # ----------------------------------------------------------------------
+      # BUILD AND PUSH DOCKER IMAGE
+      # ----------------------------------------------------------------------
+      - name: Authenticate Docker to Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Container
+        run: |-
+          IMAGE="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}"
+          docker build -t $IMAGE ./CloudRunFunction
+          docker push $IMAGE
 
       # ----------------------------------------------------------------------
       # DEPLOY
@@ -55,7 +69,7 @@ jobs:
         with:
           service: ${{ env.SERVICE }}
           region: ${{ env.REGION }}
-          source: ./CloudRunFunction # Path to your source code
+          image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}
           
       - name: Show Output
         run: echo "Successfully deployed to ${{ steps.deploy.outputs.url }}"
