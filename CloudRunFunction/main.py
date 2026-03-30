@@ -1,9 +1,16 @@
 import os
 import json
+from datetime import datetime
 from flask import Flask, request, jsonify
 from google.cloud import bigquery
 
 app = Flask(__name__)
+
+# Global variable to keep track of the latest event
+latest_event_info = {
+    "time": None,
+    "data": None
+}
 
 # Use the Google Cloud SDK standard environment variable for authentication
 # Set GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
@@ -98,9 +105,26 @@ def hello_world():
                 font-weight: 600;
                 font-size: 0.9em;
             }}
+            .top-bar {{
+                background-color: #34a853;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+                font-weight: bold;
+                display: none;
+                width: 100%;
+                max-width: 600px;
+                text-align: center;
+                box-sizing: border-box;
+            }}
         </style>
     </head>
     <body>
+        <div id="event-banner" class="top-bar">
+            Latest Event: <span id="event-time">None</span>
+        </div>
+
         <div class="card">
             <h1>Dataset: {dataset_id}</h1>
             <p>Select a table to view details</p>
@@ -108,18 +132,55 @@ def hello_world():
                 {tables_html if tables_html else '<p>No tables found.</p>'}
             </div>
         </div>
+
+        <script>
+            let lastKnownTime = null;
+
+            function pollForEvents() {{
+                fetch('/api/latest-event')
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.time && data.time !== lastKnownTime) {{
+                            lastKnownTime = data.time;
+                            
+                            // Update top banner
+                            document.getElementById('event-banner').style.display = 'block';
+                            document.getElementById('event-time').innerText = data.time;
+                            
+                            // Show pop-up notification
+                            alert("New Event Received at " + data.time + "\\n\\nData: " + JSON.stringify(data.data));
+                        }}
+                    }})
+                    .catch(error => console.error('Error fetching event data:', error));
+            }}
+
+            // Poll every 3 seconds
+            setInterval(pollForEvents, 3000);
+            pollForEvents(); // Initial check
+        </script>
     </body>
     </html>
     """
 
-@app.route("/big-querry/eventlistener", methods=["POST"])
+# New endpoint for the frontend to poll the latest event status
+@app.route("/api/latest-event", methods=["GET"])
+def get_latest_event():
+    return jsonify(latest_event_info)
+
+@app.route("/big-querry/eventlistener", methods=["GET", "POST"])
 def bq_event_listener():
+    global latest_event_info
+    
     if request.method == "POST":
         # Parse the JSON payload from the request
         data = request.get_json(silent=True) or {}
         
+        # Update global tracker with current time
+        latest_event_info["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        latest_event_info["data"] = data
+        
         # Log the received data to the console (for Cloud Run logs)
-        print(f"--- Event Listener Triggered ---")
+        print(f"--- Event Listener Triggered at {latest_event_info['time']} ---")
         print(json.dumps(data, indent=2))
         print(f"--------------------------------")
         
