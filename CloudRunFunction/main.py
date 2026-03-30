@@ -167,7 +167,7 @@ def hello_world():
 def get_latest_event():
     return jsonify(latest_event_info)
 
-        @app.route("/big-querry/eventlistener", methods=["GET", "POST"])
+@app.route("/big-querry/eventlistener", methods=["GET", "POST"])
 def bq_event_listener():
     global latest_event_info
     
