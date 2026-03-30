@@ -167,7 +167,7 @@ def hello_world():
 def get_latest_event():
     return jsonify(latest_event_info)
 
-@app.route("/big-querry/eventlistener", methods=["GET", "POST"])
+        @app.route("/big-querry/eventlistener", methods=["GET", "POST"])
 def bq_event_listener():
     global latest_event_info
     
@@ -175,20 +175,42 @@ def bq_event_listener():
         # Parse the JSON payload from the request
         data = request.get_json(silent=True) or {}
         
-        # Update global tracker with current time
-        latest_event_info["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        latest_event_info["data"] = data
+        # Safely extract audit log data from the highly nested structure
+        protoPayload = data.get("protoPayload", {})
+        metadata = protoPayload.get("metadata", {})
+        jobChange = metadata.get("jobChange", {})
+        job = jobChange.get("job", {})
+        jobConfig = job.get("jobConfig", {})
+        queryConfig = jobConfig.get("queryConfig", {})
         
-        # Log the received data to the console (for Cloud Run logs)
+        # Build a cleaner structure for tracking
+        cleaned_data = {
+            "principalEmail": protoPayload.get("authenticationInfo", {}).get("principalEmail", "Unknown"),
+            "methodName": protoPayload.get("methodName", "Unknown"),
+            "query": queryConfig.get("query", "N/A"),
+            "destinationTable": queryConfig.get("destinationTable", "N/A"),
+            "statementType": queryConfig.get("statementType", "N/A"),
+            "logName": data.get("logName", "Unknown"),
+            "severity": data.get("severity", "INFO"),
+            "timestamp": data.get("timestamp", "Unknown")
+        }
+        
+        # Update global tracker with current time and cleaned data
+        latest_event_info["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        latest_event_info["data"] = cleaned_data
+        
+        # Log the received data to the console cleanly inline
         print(f"--- Event Listener Triggered at {latest_event_info['time']} ---")
-        print(json.dumps(data, indent=2))
+        print(f"User: {cleaned_data['principalEmail']} | Method: {cleaned_data['methodName']}")
+        print(f"Query: {cleaned_data['query']}")
+        print(f"Destination: {cleaned_data['destinationTable']} | Type: {cleaned_data['statementType']}")
         print(f"--------------------------------")
         
         # Return a JSON response acknowledging receipt
         return jsonify({
             "status": "success",
             "message": "Notification received successfully",
-            "received_data": data
+            "received_data": cleaned_data
         }), 200
 
     # For GET requests, return a simple HTML page or message
