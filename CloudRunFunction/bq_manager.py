@@ -8,6 +8,8 @@ Handles all BigQuery operations:
 """
 
 import os
+from datetime import datetime
+from typing import Optional
 from google.cloud import bigquery
 
 # Read once at module level — set these in your environment or Dockerfile
@@ -43,7 +45,7 @@ def query_table(table_id: str, dataset_id: str = None, limit: int = 100) -> list
 
 # get latest Datetime  from  the table snapshot_times
 ## the table snapshot_times has Oone columns:dateTime :2026-03-30 03:50:34.455944 UTC
-def get_latestSnapshot() -> datetime:
+def get_latestSnapshot() -> Optional[datetime]:
     client = get_client()
     query = f"""
         SELECT MAX(snapshot_time) as latest_snapshot
