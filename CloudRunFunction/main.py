@@ -1,21 +1,81 @@
 import os
 import json
+import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
 from google.cloud import bigquery
+from bq_manager import get_dataset_summary, query_table, get_table_schema, get_latestSnapshot
+from lucidchart_display import LUCIDCHART_API_TOKEN, LUCIDCHART_DOCUMENT_ID, push_summary_to_lucidchart, push_table_rows_to_lucidchart, list_lucidchart_collections
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
 # Global variable to keep track of the latest event
 latest_event_info = {
-    "time": None,
-    "data": None
+    "event": None,
+    "latest_snapshot": None
 }
 
-# Use the Google Cloud SDK standard environment variable for authentication
-# Set GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-# Set BQ_PROJECT=your-project-id
-# Set BQ_DATASET=your-dataset-id
+
+# ──────────────────────────────────────────────
+# Startup checks
+# ──────────────────────────────────────────────
+
+def test_bigquery_auth() -> bool:
+    """
+    Verify that BigQuery credentials are valid and the configured
+    project/dataset is reachable. Logs success or a detailed error.
+    Returns True on success, False on failure.
+    """
+    try:
+        client = bigquery.Client(project=BQ_PROJECT)
+        # A lightweight probe: list datasets (does not read table data)
+        list(client.list_datasets(max_results=1))
+        log.info("[BigQuery] Authentication OK — project: %s, dataset: %s", BQ_PROJECT, BQ_DATASET)
+        return True
+    except Exception as e:
+        log.error("[BigQuery] Authentication FAILED — %s", str(e))
+        log.error("[BigQuery] Ensure GOOGLE_APPLICATION_CREDENTIALS and BQ_PROJECT are set correctly.")
+        return False
+
+
+def test_lucidchart_api() -> bool:
+    """
+    Verify that the LucidChart API token and document ID are configured
+    and the API is reachable. Logs success or a detailed error.
+    Returns True on success, False on failure.
+    """
+    import requests as req
+
+    if not LUCIDCHART_API_TOKEN:
+        log.error("[LucidChart] LUCIDCHART_API_TOKEN is not set.")
+        return False
+    if not LUCIDCHART_DOCUMENT_ID:
+        log.error("[LucidChart] LUCIDCHART_DOCUMENT_ID is not set.")
+        return False
+
+    try:
+        url = f"https://api.lucid.co/documents/{LUCIDCHART_DOCUMENT_ID}/data-collections"
+        headers = {
+            "Authorization": f"Bearer {LUCIDCHART_API_TOKEN}",
+            "Content-Type": "application/json",
+            "Lucid-Api-Version": "1",
+        }
+        response = req.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        log.info("[LucidChart] API connection OK — document: %s", LUCIDCHART_DOCUMENT_ID)
+        return True
+    except Exception as e:
+        log.error("[LucidChart] API connection FAILED — %s", str(e))
+        log.error("[LucidChart] Ensure LUCIDCHART_API_TOKEN and LUCIDCHART_DOCUMENT_ID are set correctly.")
+        return False
+
+
+# Run both checks at startup
+test_bigquery_auth()
+test_lucidchart_api()
 
 @app.route("/")
 def hello_world():
@@ -169,69 +229,18 @@ def get_latest_event():
 
 @app.route("/big-querry/eventlistener", methods=["GET", "POST"])
 def bq_event_listener():
-    global latest_event_info
-    
-    if request.method == "POST":
-        # Parse the JSON payload from the request
-        data = request.get_json(silent=True) or {}
-        
-        # Safely extract audit log data from the highly nested structure
-        protoPayload = data.get("protoPayload", {})
-        metadata = protoPayload.get("metadata", {})
-        jobChange = metadata.get("jobChange", {})
-        job = jobChange.get("job", {})
-        jobConfig = job.get("jobConfig", {})
-        queryConfig = jobConfig.get("queryConfig", {})
-        
-        # Build a cleaner structure for tracking
-        cleaned_data = {
-            "principalEmail": protoPayload.get("authenticationInfo", {}).get("principalEmail", "Unknown"),
-            "methodName": protoPayload.get("methodName", "Unknown"),
-            "query": queryConfig.get("query", "N/A"),
-            "destinationTable": queryConfig.get("destinationTable", "N/A"),
-            "statementType": queryConfig.get("statementType", "N/A"),
-            "logName": data.get("logName", "Unknown"),
-            "severity": data.get("severity", "INFO"),
-            "timestamp": data.get("timestamp", "Unknown")
-        }
-        
-        # Update global tracker with current time and cleaned data
-        latest_event_info["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        latest_event_info["data"] = cleaned_data
-        
-        # Log the received data to the console cleanly inline
-        print(f"--- Event Listener Triggered at {latest_event_info['time']} ---")
-        print(f"User: {cleaned_data['principalEmail']} | Method: {cleaned_data['methodName']}")
-        print(f"Query: {cleaned_data['query']}")
-        print(f"Destination: {cleaned_data['destinationTable']} | Type: {cleaned_data['statementType']}")
-        print(f"--------------------------------")
-        
-        # Return a JSON response acknowledging receipt
-        return jsonify({
-            "status": "success",
-            "message": "Notification received successfully",
-            "received_data": cleaned_data
-        }), 200
+    global latest_event_info # Use global variable to store the latest event info
+    event_time = datetime.utcnow().isoformat() + "Z"  # ISO format with UTC timezone
+    # 2026-03-30 03:50:34.455944 UTC id the time returned from get_latestSnapshot() function
+    latest_snapshot = get_latestSnapshot()
+    event_data = {
+        "event": "BigQuery Table Update",
+        "latest_snapshot": latest_snapshot.isoformat() + "Z" if latest_snapshot else None
+    }
+    latest_event_info = event_data
 
-    # For GET requests, return a simple HTML page or message
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <title>Event Listener</title>
-        <style>
-            body { font-family: sans-serif; padding: 40px; }
-            .notification { background: #e8f0fe; border-left: 4px solid #1a73e8; padding: 20px; }
-        </style>
-    </head>
-    <body>
-        <div class="notification">
-            <h2>BigQuery Event Listener is Active</h2>
-            <p>Ready to receive POST requests with JSON payloads.</p>
-        </div>
-    </body>
-    </html>
-    """, 200
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+

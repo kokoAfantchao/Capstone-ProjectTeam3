@@ -5,6 +5,14 @@ FROM python:3.11-slim
 # Allow statements and log messages to immediately appear in the Knative logs
 ENV PYTHONUNBUFFERED True
 
+# BigQuery configuration — override these at deploy time via Cloud Run env vars
+ENV BQ_PROJECT="my-gcp-project"
+ENV BQ_DATASET="my_dataset"
+
+# LucidChart configuration — override these at deploy time via Cloud Run env vars
+ENV LUCIDCHART_API_TOKEN=""
+ENV LUCIDCHART_DOCUMENT_ID=""
+
 # Copy local code to the container image.
 ENV APP_HOME /app
 WORKDIR $APP_HOME
