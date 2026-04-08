@@ -11,15 +11,15 @@ import os
 from datetime import datetime
 from typing import Optional
 from google.cloud import bigquery
+from google.oauth2 import service_account
 
 # Read once at module level — set these in your environment or Dockerfile
 BQ_PROJECT = os.environ.get("BQ_PROJECT", "ksu-team-2")
-BQ_DATASET = os.environ.get("BQ_DATASET", "apstone_dev")
+BQ_DATASET = os.environ.get("BQ_DATASET", "capstone_dev")
+
 
 
 def get_client() -> bigquery.Client:
-    """Initialize and return a BigQuery client using env vars."""
-    # Credentials are picked up automatically from GOOGLE_APPLICATION_CREDENTIALS
     return bigquery.Client(project=BQ_PROJECT)
 
 

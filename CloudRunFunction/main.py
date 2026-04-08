@@ -4,8 +4,8 @@ import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
 from google.cloud import bigquery
-from bq_manager import get_dataset_summary, query_table, get_table_schema, get_latestSnapshot
-from lucidchart_display import LUCIDCHART_API_TOKEN, LUCIDCHART_DOCUMENT_ID, push_summary_to_lucidchart, push_table_rows_to_lucidchart, list_lucidchart_collections
+from bq_manager import get_dataset_summary, get_latestSnapshot,BQ_PROJECT, BQ_DATASET
+from lucidchart_display import LUCIDCHART_API_TOKEN, LUCIDCHART_DOCUMENT_ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -79,23 +79,24 @@ test_lucidchart_api()
 
 @app.route("/")
 def hello_world():
-    project_id = os.environ.get("BQ_PROJECT", "my-gcp-project")
-    dataset_id = os.environ.get("BQ_DATASET", "my_dataset")
-    
-    # Initialize the BigQuery client
-    # The client will automatically look for the GOOGLE_APPLICATION_CREDENTIALS environment variable
-    client = bigquery.Client(project=project_id)
-    
+    # Use BQ_PROJECT/BQ_DATASET and the authenticated client from bq_manager
+    project_id = BQ_PROJECT
+    dataset_id = BQ_DATASET
+
+    # Use get_client() which loads credentials from the service account JSON
+    from bq_manager import get_client
+    client = get_client()
+
     # Query the dataset's __TABLES__ meta-table to get row counts efficiently
     query = f"""
         SELECT table_id, row_count
         FROM `{project_id}.{dataset_id}.__TABLES__`
     """
-    
+
     try:
         query_job = client.query(query)
         results = query_job.result()
-        
+
         tables_html = ""
         for row in results:
             tables_html += f"""

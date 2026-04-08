@@ -15,7 +15,7 @@ Usage:
 import os
 import json
 import requests
-from bq_manager import get_dataset_summary, query_table, get_table_schema
+from bq_manager import get_dataset_summary
 
 
 # ──────────────────────────────────────────────
@@ -113,57 +113,6 @@ def _format_table_rows_as_lucid_collection(
 # Public API
 # ──────────────────────────────────────────────
 
-def push_summary_to_lucidchart(dataset_id: str = None) -> dict:
-    """
-    Fetch a BigQuery dataset summary and push table row counts
-    to a LucidChart document as a data collection.
-
-    Returns the parsed JSON response from the LucidChart API.
-    """
-    summary = get_dataset_summary(dataset_id)
-    payload = _format_summary_as_lucid_collection(summary)
-
-    doc_id = _get_document_id()
-    url = f"{LUCID_API_BASE}/documents/{doc_id}/data-collections"
-
-    response = requests.post(url, headers=_get_headers(), json=payload, timeout=15)
-    response.raise_for_status()
-
-    print(
-        f"[LucidChart] Pushed dataset summary: "
-        f"{summary['total_tables']} tables, {summary['total_rows']} total rows"
-    )
-    return response.json()
-
-
-def push_table_rows_to_lucidchart(
-    table_id: str,
-    dataset_id: str = None,
-    limit: int = 200,
-) -> dict:
-    """
-    Fetch rows from a specific BQ table and push them to LucidChart
-    as a named data collection linked to shapes in the document.
-
-    Args:
-        table_id:   BigQuery table name.
-        dataset_id: Optional dataset override.
-        limit:      Max rows to send (default 200).
-
-    Returns the parsed JSON response from the LucidChart API.
-    """
-    rows = query_table(table_id, dataset_id, limit)
-    schema = get_table_schema(table_id, dataset_id)
-    payload = _format_table_rows_as_lucid_collection(table_id, rows, schema)
-
-    doc_id = _get_document_id()
-    url = f"{LUCID_API_BASE}/documents/{doc_id}/data-collections"
-
-    response = requests.post(url, headers=_get_headers(), json=payload, timeout=30)
-    response.raise_for_status()
-
-    print(f"[LucidChart] Pushed {len(rows)} rows from table '{table_id}'")
-    return response.json()
 
 
 def list_lucidchart_collections() -> list[dict]:
