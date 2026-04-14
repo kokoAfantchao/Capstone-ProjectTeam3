@@ -13,6 +13,16 @@ ENV BQ_DATASET="my_dataset"
 ENV LUCIDCHART_API_TOKEN=""
 ENV LUCIDCHART_DOCUMENT_ID=""
 
+# LucidChart OAuth / import credentials
+ENV LUCID_ACCESS_TOKEN=""
+ENV LUCID_CLIENT_ID="NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1"
+ENV LUCID_CLIENT_SECRET="mKQx0VqgOA0nKGSHplhR116pq__WZ9mqPIy5bOwLh5i1nPBC1oabBj_2rGgrdcWVTDqF0VSiirbgdbeOkhuL"
+ENV LUCID_REFRESH_TOKEN=""
+
+# BigQuery views used by lucidchart_builder.py
+ENV NODES_VIEW="vw_lucid_nodes_all"
+ENV EDGES_VIEW="vw_lucid_edges_all"
+
 # Copy local code to the container image.
 ENV APP_HOME /app
 WORKDIR $APP_HOME

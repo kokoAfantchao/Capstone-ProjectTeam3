@@ -1,11 +1,14 @@
 import os
 import json
 import logging
+import urllib.parse
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
+import requests as http_requests
 from google.cloud import bigquery
-from bq_manager import get_dataset_summary, get_latestSnapshot,BQ_PROJECT, BQ_DATASET
+from bq_manager import get_dataset_summary, get_latestSnapshot, BQ_PROJECT, BQ_DATASET
 from lucidchart_display import LUCIDCHART_API_TOKEN, LUCIDCHART_DOCUMENT_ID
+from lucidchart_builder import trigger_lucid_import, LUCID_CLIENT_SECRET
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -87,7 +90,6 @@ def hello_world():
     from bq_manager import get_client
     client = get_client()
 
-    # Query the dataset's __TABLES__ meta-table to get row counts efficiently
     query = f"""
         SELECT table_id, row_count
         FROM `{project_id}.{dataset_id}.__TABLES__`
@@ -96,12 +98,17 @@ def hello_world():
     try:
         query_job = client.query(query)
         results = query_job.result()
-
+        
+                
         tables_html = ""
-        for row in results:
+        for table in results:
+            log.info(f"Table: {table.table_id}, Rows: {table.row_count}")
+
             tables_html += f"""
                 <button class="table-button">
-                    {row.table_id} <span class="badge">{row.row_count}</span>
+                    {table.table_id} <span class="badge">{table.row_count}</span>
+                    </br>
+                    <p style="font-size: 0.8em; color: #666;">Click for details</p>
                 </button>
             """
     except Exception as e:
@@ -230,15 +237,218 @@ def get_latest_event():
 
 @app.route("/big-querry/eventlistener", methods=["GET", "POST"])
 def bq_event_listener():
-    global latest_event_info # Use global variable to store the latest event info
-    event_time = datetime.utcnow().isoformat() + "Z"  # ISO format with UTC timezone
-    # 2026-03-30 03:50:34.455944 UTC id the time returned from get_latestSnapshot() function
+    global latest_event_info
+
+    if request.method == "GET":
+        return jsonify({"status": "listening", "latest": latest_event_info}), 200
+
+    # ── POST: update snapshot tracker then push to LucidChart ──
     latest_snapshot = get_latestSnapshot()
     event_data = {
         "event": "BigQuery Table Update",
-        "latest_snapshot": latest_snapshot.isoformat() + "Z" if latest_snapshot else None
+        "latest_snapshot": latest_snapshot.isoformat() + "Z" if latest_snapshot else None,
+        "received_at": datetime.utcnow().isoformat() + "Z",
     }
     latest_event_info = event_data
+    log.info("[EventListener] POST received — snapshot: %s", event_data["latest_snapshot"])
+
+    try:
+        lucid_result = trigger_lucid_import()
+        log.info("[LucidChart] Import complete — %s", lucid_result)
+        return jsonify({
+            "status": "success",
+            "event": event_data,
+            "lucidchart": lucid_result,
+        }), 200
+    except Exception as e:
+        log.error("[LucidChart] Import failed — %s", str(e))
+        return jsonify({
+            "status": "partial",
+            "event": event_data,
+            "lucidchart_error": str(e),
+        }), 500
+
+
+# ──────────────────────────────────────────────
+# LucidChart OAuth2  (/auth/lucidchart  +  callback)
+# ──────────────────────────────────────────────
+
+_LUCID_AUTH_URL   = "https://api.lucid.co/oauth2/authorize"
+_LUCID_TOKEN_URL  = "https://api.lucid.co/oauth2/token"
+_LUCID_CLIENT_ID  = os.environ.get("LUCID_CLIENT_ID",
+                         "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
+_LUCID_REDIRECT   = ("https://lucid.app/oauth2/clients/"
+                     "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1/redirect")
+SCOPES = "lucidchart.document.content lucidchart.document.app.folder.contents"
+
+
+def _exchange_code_for_tokens(code):
+    """Exchange an OAuth2 authorization code for access + refresh tokens."""
+    client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
+    if not client_secret:
+        raise ValueError("LUCID_CLIENT_SECRET env var not set")
+
+    resp = http_requests.post(_LUCID_TOKEN_URL, data={
+        "grant_type":    "authorization_code",
+        "code":          code,
+        "redirect_uri":  _LUCID_REDIRECT,
+        "client_id":     _LUCID_CLIENT_ID,
+        "client_secret": client_secret,
+    }, timeout=30)
+
+    if not resp.ok:
+        raise RuntimeError(f"Token exchange failed {resp.status_code}: {resp.text}")
+
+    tokens = resp.json()
+    access_token  = tokens.get("access_token", "")
+    refresh_token = tokens.get("refresh_token", "")
+    os.environ["LUCID_ACCESS_TOKEN"]  = access_token
+    os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
+    log.info("[OAuth] LucidChart tokens stored in environment.")
+    return tokens
+
+
+@app.route("/auth/lucidchart")
+def auth_lucidchart():
+    """
+    Auth dashboard:
+      • Shows current token status
+      • Provides an 'Authorize' link to start the OAuth2 consent flow
+      • Has a form to paste the authorization code (shown at Lucid's redirect page)
+      • Has a form to paste an access token directly
+    """
+    params = {
+        "response_type": "code",
+        "client_id":     _LUCID_CLIENT_ID,
+        "redirect_uri":  _LUCID_REDIRECT,
+        "scope":         SCOPES,
+        "state":         "lucid-auth",
+    }
+    auth_url = _LUCID_AUTH_URL + "?" + urllib.parse.urlencode(params)
+
+    existing_token = os.environ.get("LUCID_ACCESS_TOKEN", "")
+    token_status   = (existing_token[:16] + "…  ✅ set") if existing_token else "❌ not set"
+    refresh_status = ("✅ set" if os.environ.get("LUCID_REFRESH_TOKEN") else "❌ not set")
+
+    html = f"""<!DOCTYPE html>
+<html><head><title>LucidChart Auth</title>
+<style>
+  body {{font-family:sans-serif;max-width:640px;margin:40px auto;padding:0 16px}}
+  h2  {{border-bottom:1px solid #ccc;padding-bottom:8px}}
+  .card {{background:#f9f9f9;border:1px solid #ddd;border-radius:6px;padding:16px;margin:16px 0}}
+  .ok  {{color:green}} .err{{color:red}}
+  input[type=text],input[type=password]{{width:100%;box-sizing:border-box;padding:6px;margin:6px 0}}
+  button{{padding:8px 18px;cursor:pointer}}
+  a.btn{{display:inline-block;padding:8px 18px;background:#4c6ef5;color:#fff;border-radius:4px;text-decoration:none}}
+</style></head><body>
+<h2>LucidChart OAuth Status</h2>
+<div class="card">
+  <b>Access token:</b>  <span class="{'ok' if existing_token else 'err'}">{token_status}</span><br>
+  <b>Refresh token:</b> <span class="{'ok' if os.environ.get('LUCID_REFRESH_TOKEN') else 'err'}">{refresh_status}</span>
+</div>
+
+<div class="card">
+  <h3>Step 1 — Authorize with LucidChart</h3>
+  <p>Click below. LucidChart will ask you to log in, then redirect to a Lucid page that
+  <b>displays your authorization code</b>. Copy that code and paste it in Step 2.</p>
+  <a class="btn" href="{auth_url}" target="_blank">Open LucidChart consent ↗</a>
+</div>
+
+<div class="card">
+  <h3>Step 2 — Paste the authorization code</h3>
+  <form method="POST" action="/auth/lucidchart/exchange-code">
+    <input type="text" name="code" placeholder="Paste authorization code here…" required>
+    <button type="submit">Exchange for tokens</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Alternative — Paste an access token directly</h3>
+  <p>If you already have a valid token from the LucidChart developer portal:</p>
+  <form method="POST" action="/auth/lucidchart/set-token">
+    <input type="password" name="access_token"  placeholder="Access token"  required>
+    <input type="text"     name="refresh_token" placeholder="Refresh token (optional)">
+    <button type="submit">Save token</button>
+  </form>
+</div>
+</body></html>"""
+    return html
+
+
+@app.route("/auth/lucidchart/exchange-code", methods=["POST"])
+def auth_lucidchart_exchange_code():
+    """Accept a manually pasted authorization code and exchange it for tokens."""
+    code = request.form.get("code") or (request.json or {}).get("code")
+    if not code:
+        return jsonify({"status": "error", "detail": "no code provided"}), 400
+    try:
+        tokens = _exchange_code_for_tokens(code.strip())
+    except (ValueError, RuntimeError) as exc:
+        log.error("[OAuth] exchange-code failed: %s", exc)
+        return jsonify({"status": "error", "detail": str(exc)}), 502
+
+    at = tokens.get("access_token", "")
+    rt = tokens.get("refresh_token", "")
+    # Redirect back to the auth dashboard with confirmation
+    return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
+<h2>✅ Tokens saved</h2>
+<p><b>Access token:</b>  {at[:16]}…</p>
+<p><b>Refresh token:</b> {rt[:16] + '…' if rt else '(none)'}</p>
+<p>expires_in = {tokens.get('expires_in')} s</p>
+<a href="/auth/lucidchart">← Back to auth page</a>
+</body></html>"""
+
+
+@app.route("/auth/lucidchart/set-token", methods=["POST"])
+def auth_lucidchart_set_token():
+    """Directly inject an access token (and optional refresh token) into the environment."""
+    body          = request.form if request.form else (request.get_json() or {})
+    access_token  = body.get("access_token", "").strip()
+    refresh_token = body.get("refresh_token", "").strip()
+
+    if not access_token:
+        return jsonify({"status": "error", "detail": "access_token is required"}), 400
+
+    os.environ["LUCID_ACCESS_TOKEN"] = access_token
+    if refresh_token:
+        os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
+    log.info("[OAuth] Access token manually set (len=%d).", len(access_token))
+
+    return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
+<h2>✅ Token saved</h2>
+<p><b>Access token:</b>  {access_token[:16]}…</p>
+<p><b>Refresh token:</b> {refresh_token[:16] + '…' if refresh_token else '(none)'}</p>
+<a href="/auth/lucidchart">← Back to auth page</a>
+</body></html>"""
+
+
+@app.route("/auth/lucidchart/callback")
+def auth_lucidchart_callback():
+    """
+    Standard OAuth2 callback — handles ?code= if LucidChart ever redirects here directly.
+    Also accepts ?code= as a fallback for manual redirect.
+    """
+    code  = request.args.get("code")
+    error = request.args.get("error")
+
+    if error or not code:
+        msg = error or "no code returned"
+        log.error("[OAuth] Callback error: %s", msg)
+        return redirect(f"/auth/lucidchart?error={urllib.parse.quote(msg)}")
+
+    try:
+        tokens = _exchange_code_for_tokens(code)
+    except (ValueError, RuntimeError) as exc:
+        log.error("[OAuth] Callback token exchange failed: %s", exc)
+        return jsonify({"status": "error", "detail": str(exc)}), 502
+
+    at = tokens.get("access_token", "")
+    return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
+<h2>✅ LucidChart authorized</h2>
+<p><b>Access token:</b>  {at[:16]}…</p>
+<p>expires_in = {tokens.get('expires_in')} s</p>
+<a href="/">← Home</a>
+</body></html>"""
 
 
 if __name__ == "__main__":
