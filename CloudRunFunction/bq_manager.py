@@ -21,14 +21,13 @@ RUn_ENV = os.environ.get("RUN_ENV", "local_dev")  # "local" or "cloudrun"
 
 
 def get_client() -> bigquery.Client:
-    return bigquery.Client(project=BQ_PROJECT)
-    # if RUn_ENV != "local_dev":
-    #   return bigquery.Client(project=BQ_PROJECT)
-    # else:
-    #     credentials = service_account.Credentials.from_service_account_file(
-    #         os.path.expanduser("../ActiveDirectoryScript/service-account.json")
-    #     )
-    #     return bigquery.Client(project=BQ_PROJECT, credentials=credentials)
+    if RUn_ENV != "local_dev":
+      return bigquery.Client(project=BQ_PROJECT)
+    else:
+        credentials = service_account.Credentials.from_service_account_file(
+            os.path.expanduser("../ActiveDirectoryScript/service-account.json")
+        )
+        return bigquery.Client(project=BQ_PROJECT, credentials=credentials)
 
 
 def query_table(table_id: str, dataset_id: str = None, limit: int = 100) -> list[dict]:
