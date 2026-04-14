@@ -243,28 +243,17 @@ def bq_event_listener():
         return jsonify({"status": "listening", "latest": latest_event_info}), 200
 
     # ── POST: update snapshot tracker then push to LucidChart ──
-    # latest_snapshot = get_latestSnapshot()
-    # event_data = {
-    #     "event": "BigQuery Table Update",
-    #     "latest_snapshot": latest_snapshot.isoformat() + "Z" if latest_snapshot else None,
-    #     "received_at": datetime.utcnow().isoformat() + "Z",
-    # }
-    # latest_event_info = event_data
-    # log.info("[EventListener] POST received — snapshot: %s", event_data["latest_snapshot"])
-
     try:
         lucid_result = trigger_lucid_import()
         log.info("[LucidChart] Import complete — %s", lucid_result)
         return jsonify({
             "status": "success",
-            "event": event_data,
             "lucidchart": lucid_result,
         }), 200
     except Exception as e:
         log.error("[LucidChart] Import failed — %s", str(e))
         return jsonify({
             "status": "partial",
-            "event": event_data,
             "lucidchart_error": str(e),
         }), 500
 
@@ -322,6 +311,7 @@ def auth_lucidchart():
         "client_id":     _LUCID_CLIENT_ID,
         "redirect_uri":  _LUCID_REDIRECT,
         "scope":         SCOPES,
+        ""
         "state":         "lucid-auth",
     }
     auth_url = _LUCID_AUTH_URL + "?" + urllib.parse.urlencode(params)
