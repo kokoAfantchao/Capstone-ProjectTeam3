@@ -262,7 +262,7 @@ def bq_event_listener():
 # LucidChart OAuth2  (/auth/lucidchart  +  callback)
 # ──────────────────────────────────────────────
 
-_LUCID_AUTH_URL   = "https://api.lucid.co/oauth2/authorize"
+_LUCID_AUTH_URL   = "https://lucid.app/oauth2/authorize"
 _LUCID_TOKEN_URL  = "https://api.lucid.co/oauth2/token"
 _LUCID_CLIENT_ID  = os.environ.get("LUCID_CLIENT_ID",
                          "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
@@ -311,7 +311,6 @@ def auth_lucidchart():
         "client_id":     _LUCID_CLIENT_ID,
         "redirect_uri":  _LUCID_REDIRECT,
         "scope":         SCOPES,
-        ""
         "state":         "lucid-auth",
     }
     auth_url = _LUCID_AUTH_URL + "?" + urllib.parse.urlencode(params)
