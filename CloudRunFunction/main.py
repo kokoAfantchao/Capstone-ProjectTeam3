@@ -268,7 +268,7 @@ _LUCID_CLIENT_ID  = os.environ.get("LUCID_CLIENT_ID",
                          "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
 _LUCID_REDIRECT   = ("https://lucid.app/oauth2/clients/"
                      "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1/redirect")
-SCOPES = "lucidchart.document.content lucidchart.document.app.folder.contents"
+SCOPES = "lucidchart.document.content offline_access"
 
 
 def _exchange_code_for_tokens(code):
