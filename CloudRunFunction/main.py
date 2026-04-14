@@ -243,14 +243,14 @@ def bq_event_listener():
         return jsonify({"status": "listening", "latest": latest_event_info}), 200
 
     # ── POST: update snapshot tracker then push to LucidChart ──
-    latest_snapshot = get_latestSnapshot()
-    event_data = {
-        "event": "BigQuery Table Update",
-        "latest_snapshot": latest_snapshot.isoformat() + "Z" if latest_snapshot else None,
-        "received_at": datetime.utcnow().isoformat() + "Z",
-    }
-    latest_event_info = event_data
-    log.info("[EventListener] POST received — snapshot: %s", event_data["latest_snapshot"])
+    # latest_snapshot = get_latestSnapshot()
+    # event_data = {
+    #     "event": "BigQuery Table Update",
+    #     "latest_snapshot": latest_snapshot.isoformat() + "Z" if latest_snapshot else None,
+    #     "received_at": datetime.utcnow().isoformat() + "Z",
+    # }
+    # latest_event_info = event_data
+    # log.info("[EventListener] POST received — snapshot: %s", event_data["latest_snapshot"])
 
     try:
         lucid_result = trigger_lucid_import()
