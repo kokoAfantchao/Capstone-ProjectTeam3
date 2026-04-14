@@ -21,6 +21,9 @@ latest_event_info = {
     "latest_snapshot": None
 }
 
+# History of every LucidChart import triggered by the event listener
+lucid_imports_history = []  # list of {"timestamp": str, "result": dict}
+
 
 # ──────────────────────────────────────────────
 # Startup checks
@@ -246,6 +249,12 @@ def bq_event_listener():
     try:
         lucid_result = trigger_lucid_import()
         log.info("[LucidChart] Import complete — %s", lucid_result)
+
+        lucid_imports_history.append({
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "result": lucid_result,
+        })
+
         return jsonify({
             "status": "success",
             "lucidchart": lucid_result,
@@ -256,6 +265,64 @@ def bq_event_listener():
             "status": "partial",
             "lucidchart_error": str(e),
         }), 500
+
+
+# ──────────────────────────────────────────────
+# LucidChart import history  (/lucidcharts-history)
+# ──────────────────────────────────────────────
+
+@app.route("/lucidcharts-history")
+def lucidcharts_history():
+    rows_html = ""
+    for i, entry in enumerate(reversed(lucid_imports_history), 1):
+        ts  = entry["timestamp"]
+        res = entry["result"]
+        doc_id   = (res.get("lucidchart_result") or {}).get("documentId", "—")
+        nodes    = res.get("nodes_count", "—")
+        edges    = res.get("edges_count", "—")
+        pages    = res.get("pages_count", "—")
+        doc_link = (f'<a href="https://lucid.app/lucidchart/{doc_id}/edit" '
+                    f'target="_blank">{doc_id}</a>') if doc_id != "—" else "—"
+        rows_html += f"""
+        <tr>
+          <td>{len(lucid_imports_history) - i + 1}</td>
+          <td>{ts}</td>
+          <td>{nodes}</td>
+          <td>{edges}</td>
+          <td>{pages}</td>
+          <td style="word-break:break-all">{doc_link}</td>
+        </tr>"""
+
+    if not rows_html:
+        rows_html = '<tr><td colspan="6" style="text-align:center;color:#888">No imports yet.</td></tr>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>LucidChart Import History</title>
+<style>
+  body{{font-family:sans-serif;max-width:960px;margin:40px auto;padding:0 16px;background:#f8f9fa}}
+  h1{{color:#1a73e8}}
+  table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;
+         box-shadow:0 2px 8px rgba(0,0,0,.1);overflow:hidden}}
+  th{{background:#1a73e8;color:#fff;padding:12px 16px;text-align:left}}
+  td{{padding:11px 16px;border-bottom:1px solid #e0e0e0;vertical-align:top}}
+  tr:last-child td{{border-bottom:none}}
+  tr:hover td{{background:#f1f3f4}}
+  a{{color:#1a73e8}}
+  .back{{display:inline-block;margin-bottom:20px;color:#1a73e8;text-decoration:none}}
+  .badge{{background:#e8f0fe;color:#1a73e8;padding:2px 10px;border-radius:12px;font-size:.85em}}
+</style></head><body>
+<a class="back" href="/">← Back to dashboard</a>
+<h1>LucidChart Import History
+  <span class="badge">{len(lucid_imports_history)} total</span>
+</h1>
+<table>
+  <thead><tr>
+    <th>#</th><th>Timestamp (UTC)</th><th>Nodes</th><th>Edges</th><th>Pages</th><th>Document ID</th>
+  </tr></thead>
+  <tbody>{rows_html}</tbody>
+</table>
+</body></html>"""
 
 
 # ──────────────────────────────────────────────
