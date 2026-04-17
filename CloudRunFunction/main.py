@@ -333,8 +333,7 @@ _LUCID_AUTH_URL   = "https://lucid.app/oauth2/authorize"
 _LUCID_TOKEN_URL  = "https://api.lucid.co/oauth2/token"
 _LUCID_CLIENT_ID  = os.environ.get("LUCID_CLIENT_ID",
                          "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
-_LUCID_REDIRECT   = ("https://lucid.app/oauth2/clients/"
-                     "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1/redirect")
+_LUCID_REDIRECT   = ("https://bigquerry-to-lucidchart-319933101049.europe-west1.run.app/auth/lucidchart/callback")
 SCOPES = "lucidchart.document.content offline_access"
 
 
