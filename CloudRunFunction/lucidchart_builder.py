@@ -36,7 +36,7 @@ NODES_VIEW = os.getenv("NODES_VIEW", "vw_lucid_nodes_all")
 EDGES_VIEW = os.getenv("EDGES_VIEW", "vw_lucid_edges_all")
 
 LUCID_CLIENT_ID     = os.getenv("LUCID_CLIENT_ID", "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
-LUCID_CLIENT_SECRET = os.getenv("LUCID_CLIENT_SECRET", "mKQx0VqgOA0nKGSHplhR116pq__WZ9mqPIy5bOwLh5i1nPBC1oabBj_2rGgrdcWVTDqF0VSiirbgdbeOkhuL")
+LUCID_CLIENT_SECRET = os.getenv("LUCID_CLIENT_SECRET", "_-RBdkkEmu-C0FRb6IXHltrnV3BPxUKq5HRQZg-pD63_1viQcw_8mVAc50ZdTHaRer_Gkr794qaKSte51oGg")
 LUCID_REFRESH_TOKEN = os.getenv("LUCID_REFRESH_TOKEN", "")
 LUCID_ACCESS_TOKEN  = os.getenv("LUCID_ACCESS_TOKEN", "")
 
