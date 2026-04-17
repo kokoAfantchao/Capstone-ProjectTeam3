@@ -18,7 +18,7 @@ ENV LUCIDCHART_DOCUMENT_ID=""
 # LucidChart OAuth / import credentials
 ENV LUCID_ACCESS_TOKEN=""
 ENV LUCID_CLIENT_ID="NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1"
-ENV LUCID_CLIENT_SECRET="mKQx0VqgOA0nKGSHplhR116pq__WZ9mqPIy5bOwLh5i1nPBC1oabBj_2rGgrdcWVTDqF0VSiirbgdbeOkhuL"
+ENV LUCID_CLIENT_SECRET="_-RBdkkEmu-C0FRb6IXHltrnV3BPxUKq5HRQZg-pD63_1viQcw_8mVAc50ZdTHaRer_Gkr794qaKSte51oGg"
 ENV LUCID_REFRESH_TOKEN=""
 
 # BigQuery views used by lucidchart_builder.py
