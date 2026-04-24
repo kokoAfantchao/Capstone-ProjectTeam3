@@ -423,7 +423,7 @@ def _refresh_access_token():
     Per Lucid docs: refreshing invalidates the old tokens — both must be saved.
     Requires offline_access scope.
     """
-    refresh_token = os.environ.get("LUCID_REFRESH_TOKEN")
+    refresh_token = (os.environ.get("LUCID_REFRESH_TOKEN") or "").strip()
     if not refresh_token:
         raise ValueError("No refresh token available. Re-authorize via /auth/lucidchart")
 
