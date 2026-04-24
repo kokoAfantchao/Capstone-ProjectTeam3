@@ -9,10 +9,8 @@ from google.cloud import bigquery
 from bq_manager import get_dataset_summary, get_latestSnapshot, BQ_PROJECT, BQ_DATASET
 from lucidchart_display import LUCIDCHART_API_TOKEN, LUCIDCHART_DOCUMENT_ID
 from lucidchart_builder import trigger_lucid_import, LUCID_CLIENT_SECRET
-try:
-    from google.cloud import secretmanager
-except ImportError:
-    from google.cloud import secretmanager_v1 as secretmanager
+from google.cloud import secretmanager as secretmanager
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -29,7 +27,12 @@ latest_event_info = {
 # ──────────────────────────────────────────────
 # Secret Manager Helpers
 # ──────────────────────────────────────────────
+# Secret Manager Helpers
+# ──────────────────────────────────────────────    
 def get_secret(secret_id):
+    if secretmanager is None:
+        log.warning("[SecretManager] Client library not available; skipping read for %s", secret_id)
+        return None
     try:
         from bq_manager import BQ_PROJECT
         client = secretmanager.SecretManagerServiceClient()
@@ -41,6 +44,9 @@ def get_secret(secret_id):
         return None
 
 def save_secret(secret_id, payload_str):
+    if secretmanager is None:
+        log.warning("[SecretManager] Client library not available; skipping save for %s", secret_id)
+        return
     try:
         from bq_manager import BQ_PROJECT
         client = secretmanager.SecretManagerServiceClient()
