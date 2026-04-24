@@ -382,6 +382,36 @@ _LUCID_REDIRECT   = ("https://lucid.app/oauth2/clients/"
 SCOPES = "lucidchart.document.content offline_access"
 
 
+def _client_credentials_grant():
+    """Attempt machine-to-machine auth via client_credentials grant.
+    Note: LucidChart may only support this for Enterprise accounts."""
+    client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
+    if not client_secret:
+        raise ValueError("LUCID_CLIENT_SECRET env var not set")
+
+    resp = http_requests.post(_LUCID_TOKEN_URL, data={
+        "grant_type":    "client_credentials",
+        "client_id":     _LUCID_CLIENT_ID,
+        "client_secret": client_secret,
+        "scope":         SCOPES,
+    }, timeout=30)
+
+    if not resp.ok:
+        raise RuntimeError(f"Client credentials grant failed {resp.status_code}: {resp.text}")
+
+    tokens = resp.json()
+    access_token  = tokens.get("access_token", "")
+    refresh_token = tokens.get("refresh_token", "")
+    if access_token:
+        os.environ["LUCID_ACCESS_TOKEN"] = access_token
+        save_secret("lucid_access_token", access_token)
+    if refresh_token:
+        os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
+        save_secret("lucid_refresh_token", refresh_token)
+    log.info("[OAuth] Client credentials grant succeeded.")
+    return tokens
+
+
 def _exchange_code_for_tokens(code):
     """Exchange an OAuth2 authorization code for access + refresh tokens."""
     client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
@@ -467,7 +497,16 @@ def auth_lucidchart():
 </div>
 
 <div class="card">
-  <h3>Alternative — Paste an access token directly</h3>
+  <h3>Alternative A — Machine-to-Machine (Client Credentials)</h3>
+  <p>Tries to get a token directly with just the Client ID &amp; Secret, no browser login needed.
+  <b>Only works if your LucidChart app supports the <code>client_credentials</code> grant.</b></p>
+  <form method="POST" action="/auth/lucidchart/client-credentials">
+    <button type="submit">Try Client Credentials Grant</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Alternative B — Paste an access token directly</h3>
   <p>If you already have a valid token from the LucidChart developer portal:</p>
   <form method="POST" action="/auth/lucidchart/set-token">
     <input type="password" name="access_token"  placeholder="Access token"  required>
@@ -477,6 +516,29 @@ def auth_lucidchart():
 </div>
 </body></html>"""
     return html
+
+
+@app.route("/auth/lucidchart/client-credentials", methods=["GET", "POST"])
+def auth_lucidchart_client_credentials():
+    """Attempt machine-to-machine auth via client_credentials grant."""
+    try:
+        tokens = _client_credentials_grant()
+    except (ValueError, RuntimeError) as exc:
+        log.error("[OAuth] client-credentials failed: %s", exc)
+        return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
+<h2>❌ Client Credentials Grant Failed</h2>
+<p><b>Error:</b> {exc}</p>
+<p>LucidChart likely does not support <code>client_credentials</code> for this app type.</p>
+<a href="/auth/lucidchart">← Back to auth page</a>
+</body></html>""", 502
+
+    at = tokens.get("access_token", "")
+    return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
+<h2>✅ Client Credentials Grant Succeeded</h2>
+<p><b>Access token:</b> {at[:16]}…</p>
+<p>expires_in = {tokens.get('expires_in')} s</p>
+<a href="/auth/lucidchart">← Back to auth page</a>
+</body></html>"""
 
 
 @app.route("/auth/lucidchart/exchange-code", methods=["POST"])
