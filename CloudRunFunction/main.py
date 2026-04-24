@@ -383,7 +383,7 @@ _LUCID_TOKEN_URL  = "https://api.lucid.co/oauth2/token"
 _LUCID_CLIENT_ID  = os.environ.get("LUCID_CLIENT_ID",
                          "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
 _LUCID_REDIRECT   = ("https://lucid.app/oauth2/clients/"
-                     "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
+                     "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1/redirect")
 SCOPES = "lucidchart.document.content offline_access"
 
 
@@ -427,7 +427,7 @@ def _refresh_access_token():
     if not refresh_token:
         raise ValueError("No refresh token available. Re-authorize via /auth/lucidchart")
 
-    client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
+    client_secret = (os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET) or "").strip()
     if not client_secret:
         raise ValueError("LUCID_CLIENT_SECRET env var not set")
 
@@ -446,6 +446,7 @@ def _refresh_access_token():
     _save_tokens(tokens)
     log.info("[OAuth] Access token refreshed successfully.")
     return tokens
+
 
 
 def _get_valid_access_token() -> str:
@@ -587,11 +588,6 @@ def auth_lucidchart_refresh():
 <a href="/auth/lucidchart">← Back to auth page</a>
 </body></html>"""
 
-log.info("CID=%s", _LUCID_CLIENT_ID)
-log.info("REDIRECT=%s", _LUCID_REDIRECT)
-log.info("ENV_CID=%s", os.environ.get("LUCID_CLIENT_ID"))
-log.info("ENV_SECRET_PRESENT=%s", bool(os.environ.get("LUCID_CLIENT_SECRET")))
-log.info("SECRET_LEN=%s", len((os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET) or "").strip()))
 @app.route("/auth/lucidchart/exchange-code", methods=["POST"])
 def auth_lucidchart_exchange_code():
     """Accept a manually pasted authorization code and exchange it for tokens."""
