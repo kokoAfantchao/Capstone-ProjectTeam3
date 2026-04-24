@@ -383,7 +383,7 @@ _LUCID_TOKEN_URL  = "https://api.lucid.co/oauth2/token"
 _LUCID_CLIENT_ID  = os.environ.get("LUCID_CLIENT_ID",
                          "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
 _LUCID_REDIRECT   = ("https://lucid.app/oauth2/clients/"
-                     "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1/redirect")
+                     "NEhXzDpgVSIhQKJSXzFyG0rJYshiuh5rfHfevyz1")
 SCOPES = "lucidchart.document.content offline_access"
 
 
@@ -463,14 +463,20 @@ def _exchange_code_for_tokens(code):
     """Exchange an OAuth2 authorization code for access + refresh tokens.
     Per Lucid docs: POST with JSON body to https://api.lucid.co/oauth2/token
     """
-    client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
+    client_secret = (os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET) or "").strip()
     if not client_secret:
         raise ValueError("LUCID_CLIENT_SECRET env var not set")
 
-    # Lucid requires JSON body, NOT form-encoded
+    log.info("CID=%s", _LUCID_CLIENT_ID)
+    log.info("REDIRECT=%s", _LUCID_REDIRECT)
+    log.info("ENV_CID=%s", os.environ.get("LUCID_CLIENT_ID"))
+    log.info("ENV_SECRET_PRESENT=%s", bool(os.environ.get("LUCID_CLIENT_SECRET")))
+    log.info("SECRET_LEN=%s", len(client_secret))
+    log.info("CODE_LEN=%s", len(code.strip()) if code else 0)
+
     resp = http_requests.post(_LUCID_TOKEN_URL, json={
         "grant_type":    "authorization_code",
-        "code":          code,
+        "code":          code.strip(),
         "redirect_uri":  _LUCID_REDIRECT,
         "client_id":     _LUCID_CLIENT_ID,
         "client_secret": client_secret,
@@ -483,7 +489,6 @@ def _exchange_code_for_tokens(code):
     _save_tokens(tokens)
     log.info("[OAuth] LucidChart tokens stored in environment and Secret Manager.")
     return tokens
-
 
 @app.route("/auth/lucidchart")
 def auth_lucidchart():
@@ -582,7 +587,11 @@ def auth_lucidchart_refresh():
 <a href="/auth/lucidchart">← Back to auth page</a>
 </body></html>"""
 
-
+log.info("CID=%s", _LUCID_CLIENT_ID)
+log.info("REDIRECT=%s", _LUCID_REDIRECT)
+log.info("ENV_CID=%s", os.environ.get("LUCID_CLIENT_ID"))
+log.info("ENV_SECRET_PRESENT=%s", bool(os.environ.get("LUCID_CLIENT_SECRET")))
+log.info("SECRET_LEN=%s", len((os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET) or "").strip()))
 @app.route("/auth/lucidchart/exchange-code", methods=["POST"])
 def auth_lucidchart_exchange_code():
     """Accept a manually pasted authorization code and exchange it for tokens."""
