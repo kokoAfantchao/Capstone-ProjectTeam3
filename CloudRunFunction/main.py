@@ -9,17 +9,54 @@ from google.cloud import bigquery
 from bq_manager import get_dataset_summary, get_latestSnapshot, BQ_PROJECT, BQ_DATASET
 from lucidchart_display import LUCIDCHART_API_TOKEN, LUCIDCHART_DOCUMENT_ID
 from lucidchart_builder import trigger_lucid_import, LUCID_CLIENT_SECRET
+from google.cloud import secretmanager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+
 # Global variable to keep track of the latest event
 latest_event_info = {
     "event": None,
     "latest_snapshot": None
 }
+
+# ──────────────────────────────────────────────
+# Secret Manager Helpers
+# ──────────────────────────────────────────────
+def get_secret(secret_id):
+    try:
+        from bq_manager import BQ_PROJECT
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{BQ_PROJECT}/secrets/{secret_id}/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        log.warning("[SecretManager] Could not retrieve %s: %s", secret_id, e)
+        return None
+
+def save_secret(secret_id, payload_str):
+    try:
+        from bq_manager import BQ_PROJECT
+        client = secretmanager.SecretManagerServiceClient()
+        parent = f"projects/{BQ_PROJECT}/secrets/{secret_id}"
+        payload = payload_str.encode("UTF-8")
+        client.add_secret_version(request={"parent": parent, "payload": {"data": payload}})
+        log.info("[SecretManager] Saved new version for %s", secret_id)
+    except Exception as e:
+        log.error("[SecretManager] Failed to save %s (ensure the secret exists): %s", secret_id, e)
+
+def load_tokens_from_secret_manager():
+    log.info("[SecretManager] Attempting to load LucidChart tokens...")
+    rt = get_secret("lucid_refresh_token")
+    if rt:
+        os.environ["LUCID_REFRESH_TOKEN"] = rt
+    at = get_secret("lucid_access_token")
+    if at:
+        os.environ["LUCID_ACCESS_TOKEN"] = at
+
 
 # History of every LucidChart import triggered by the event listener
 lucid_imports_history = []  # list of {"timestamp": str, "result": dict}
@@ -48,15 +85,12 @@ def test_bigquery_auth() -> bool:
 
 
 def test_lucidchart_api() -> bool:
-    """
-    Verify that the LucidChart API token and document ID are configured
-    and the API is reachable. Logs success or a detailed error.
-    Returns True on success, False on failure.
-    """
     import requests as req
+    
+    dynamic_token = os.environ.get("LUCID_ACCESS_TOKEN", LUCIDCHART_API_TOKEN)
 
-    if not LUCIDCHART_API_TOKEN:
-        log.error("[LucidChart] LUCIDCHART_API_TOKEN is not set.")
+    if not dynamic_token:
+        log.error("[LucidChart] API token is not set.")
         return False
     if not LUCIDCHART_DOCUMENT_ID:
         log.error("[LucidChart] LUCIDCHART_DOCUMENT_ID is not set.")
@@ -65,7 +99,7 @@ def test_lucidchart_api() -> bool:
     try:
         url = f"https://api.lucid.co/documents/{LUCIDCHART_DOCUMENT_ID}/data-collections"
         headers = {
-            "Authorization": f"Bearer {LUCIDCHART_API_TOKEN}",
+            "Authorization": f"Bearer {dynamic_token}",
             "Content-Type": "application/json",
             "Lucid-Api-Version": "1",
         }
@@ -81,6 +115,7 @@ def test_lucidchart_api() -> bool:
 
 # Run both checks at startup
 test_bigquery_auth()
+load_tokens_from_secret_manager()
 test_lucidchart_api()
 
 @app.route("/")
@@ -358,9 +393,13 @@ def _exchange_code_for_tokens(code):
     tokens = resp.json()
     access_token  = tokens.get("access_token", "")
     refresh_token = tokens.get("refresh_token", "")
-    os.environ["LUCID_ACCESS_TOKEN"]  = access_token
-    os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
-    log.info("[OAuth] LucidChart tokens stored in environment.")
+    if access_token:
+        os.environ["LUCID_ACCESS_TOKEN"] = access_token
+        save_secret("lucid_access_token", access_token)
+    if refresh_token:
+        os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
+        save_secret("lucid_refresh_token", refresh_token)
+    log.info("[OAuth] LucidChart tokens stored in environment and Secret Manager.")
     return tokens
 
 
@@ -466,9 +505,11 @@ def auth_lucidchart_set_token():
         return jsonify({"status": "error", "detail": "access_token is required"}), 400
 
     os.environ["LUCID_ACCESS_TOKEN"] = access_token
+    save_secret("lucid_access_token", access_token)
     if refresh_token:
         os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
-    log.info("[OAuth] Access token manually set (len=%d).", len(access_token))
+        save_secret("lucid_refresh_token", refresh_token)
+    log.info("[OAuth] Access token manually set & saved to Secret Manager.")
 
     return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
 <h2>✅ Token saved</h2>
