@@ -10,7 +10,7 @@ from bq_manager import get_dataset_summary, get_latestSnapshot, BQ_PROJECT, BQ_D
 from lucidchart_display import LUCIDCHART_API_TOKEN, LUCIDCHART_DOCUMENT_ID
 from lucidchart_builder import trigger_lucid_import, LUCID_CLIENT_SECRET
 from google.cloud import secretmanager as secretmanager
-
+# This is my first comment
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
