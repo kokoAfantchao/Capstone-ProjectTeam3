@@ -95,8 +95,13 @@ def test_bigquery_auth() -> bool:
 
 def test_lucidchart_api() -> bool:
     import requests as req
-    
-    dynamic_token = os.environ.get("LUCID_ACCESS_TOKEN", LUCIDCHART_API_TOKEN)
+
+    # _get_valid_access_token is defined later in the file; fall back to a
+    # simple env lookup when called at module-load time (startup probe only).
+    try:
+        dynamic_token = _get_valid_access_token()
+    except NameError:
+        dynamic_token = os.environ.get("LUCID_ACCESS_TOKEN", LUCIDCHART_API_TOKEN)
 
     if not dynamic_token:
         log.error("[LucidChart] API token is not set.")
@@ -382,43 +387,88 @@ _LUCID_REDIRECT   = ("https://lucid.app/oauth2/clients/"
 SCOPES = "lucidchart.document.content offline_access"
 
 
-def _client_credentials_grant():
-    """Attempt machine-to-machine auth via client_credentials grant.
-    Note: LucidChart may only support this for Enterprise accounts."""
-    client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
-    if not client_secret:
-        raise ValueError("LUCID_CLIENT_SECRET env var not set")
-
-    resp = http_requests.post(_LUCID_TOKEN_URL, data={
-        "grant_type":    "client_credentials",
-        "client_id":     _LUCID_CLIENT_ID,
-        "client_secret": client_secret,
-        "scope":         SCOPES,
-    }, timeout=30)
-
-    if not resp.ok:
-        raise RuntimeError(f"Client credentials grant failed {resp.status_code}: {resp.text}")
-
-    tokens = resp.json()
+def _save_tokens(tokens: dict):
+    """Persist access + refresh tokens to env and Secret Manager, tracking expiry."""
+    from datetime import timedelta
     access_token  = tokens.get("access_token", "")
     refresh_token = tokens.get("refresh_token", "")
+    expires_in    = tokens.get("expires_in", 3600)
     if access_token:
         os.environ["LUCID_ACCESS_TOKEN"] = access_token
+        # Store absolute expiry so we can auto-refresh (subtract 5 min buffer)
+        expiry = (datetime.utcnow() + timedelta(seconds=int(expires_in) - 300)).isoformat()
+        os.environ["LUCID_ACCESS_TOKEN_EXPIRY"] = expiry
         save_secret("lucid_access_token", access_token)
     if refresh_token:
         os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
         save_secret("lucid_refresh_token", refresh_token)
-    log.info("[OAuth] Client credentials grant succeeded.")
-    return tokens
 
 
-def _exchange_code_for_tokens(code):
-    """Exchange an OAuth2 authorization code for access + refresh tokens."""
+def _is_token_expired() -> bool:
+    """Return True if the stored access token is missing or about to expire."""
+    expiry_str = os.environ.get("LUCID_ACCESS_TOKEN_EXPIRY")
+    token      = os.environ.get("LUCID_ACCESS_TOKEN")
+    if not token:
+        return True
+    if not expiry_str:
+        return False  # token exists but no expiry info — assume valid
+    try:
+        return datetime.fromisoformat(expiry_str) <= datetime.utcnow()
+    except ValueError:
+        return False
+
+
+def _refresh_access_token():
+    """Use the stored refresh_token to obtain a new access + refresh token pair.
+    Per Lucid docs: refreshing invalidates the old tokens — both must be saved.
+    Requires offline_access scope.
+    """
+    refresh_token = os.environ.get("LUCID_REFRESH_TOKEN")
+    if not refresh_token:
+        raise ValueError("No refresh token available. Re-authorize via /auth/lucidchart")
+
     client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
     if not client_secret:
         raise ValueError("LUCID_CLIENT_SECRET env var not set")
 
-    resp = http_requests.post(_LUCID_TOKEN_URL, data={
+    # Lucid requires JSON body, NOT form-encoded
+    resp = http_requests.post(_LUCID_TOKEN_URL, json={
+        "grant_type":     "refresh_token",
+        "refresh_token":  refresh_token,
+        "client_id":      _LUCID_CLIENT_ID,
+        "client_secret":  client_secret,
+    }, timeout=30)
+
+    if not resp.ok:
+        raise RuntimeError(f"Token refresh failed {resp.status_code}: {resp.text}")
+
+    tokens = resp.json()
+    _save_tokens(tokens)
+    log.info("[OAuth] Access token refreshed successfully.")
+    return tokens
+
+
+def _get_valid_access_token() -> str:
+    """Return a valid access token, auto-refreshing if expired."""
+    if _is_token_expired():
+        log.info("[OAuth] Access token expired or missing — attempting refresh.")
+        try:
+            _refresh_access_token()
+        except Exception as e:
+            log.warning("[OAuth] Auto-refresh failed: %s", e)
+    return os.environ.get("LUCID_ACCESS_TOKEN", LUCIDCHART_API_TOKEN)
+
+
+def _exchange_code_for_tokens(code):
+    """Exchange an OAuth2 authorization code for access + refresh tokens.
+    Per Lucid docs: POST with JSON body to https://api.lucid.co/oauth2/token
+    """
+    client_secret = os.environ.get("LUCID_CLIENT_SECRET", LUCID_CLIENT_SECRET)
+    if not client_secret:
+        raise ValueError("LUCID_CLIENT_SECRET env var not set")
+
+    # Lucid requires JSON body, NOT form-encoded
+    resp = http_requests.post(_LUCID_TOKEN_URL, json={
         "grant_type":    "authorization_code",
         "code":          code,
         "redirect_uri":  _LUCID_REDIRECT,
@@ -430,14 +480,7 @@ def _exchange_code_for_tokens(code):
         raise RuntimeError(f"Token exchange failed {resp.status_code}: {resp.text}")
 
     tokens = resp.json()
-    access_token  = tokens.get("access_token", "")
-    refresh_token = tokens.get("refresh_token", "")
-    if access_token:
-        os.environ["LUCID_ACCESS_TOKEN"] = access_token
-        save_secret("lucid_access_token", access_token)
-    if refresh_token:
-        os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
-        save_secret("lucid_refresh_token", refresh_token)
+    _save_tokens(tokens)
     log.info("[OAuth] LucidChart tokens stored in environment and Secret Manager.")
     return tokens
 
@@ -497,11 +540,10 @@ def auth_lucidchart():
 </div>
 
 <div class="card">
-  <h3>Alternative A — Machine-to-Machine (Client Credentials)</h3>
-  <p>Tries to get a token directly with just the Client ID &amp; Secret, no browser login needed.
-  <b>Only works if your LucidChart app supports the <code>client_credentials</code> grant.</b></p>
-  <form method="POST" action="/auth/lucidchart/client-credentials">
-    <button type="submit">Try Client Credentials Grant</button>
+  <h3>Alternative A — Refresh Token</h3>
+  <p>If you have previously authorized and have a refresh token stored, click below to get a new access token without re-authorizing. Tokens auto-refresh on every API call too.</p>
+  <form method="POST" action="/auth/lucidchart/refresh">
+    <button type="submit">Refresh Access Token</button>
   </form>
 </div>
 
@@ -518,24 +560,24 @@ def auth_lucidchart():
     return html
 
 
-@app.route("/auth/lucidchart/client-credentials", methods=["GET", "POST"])
-def auth_lucidchart_client_credentials():
-    """Attempt machine-to-machine auth via client_credentials grant."""
+@app.route("/auth/lucidchart/refresh", methods=["GET", "POST"])
+def auth_lucidchart_refresh():
+    """Manually trigger a token refresh using the stored refresh token."""
     try:
-        tokens = _client_credentials_grant()
+        tokens = _refresh_access_token()
     except (ValueError, RuntimeError) as exc:
-        log.error("[OAuth] client-credentials failed: %s", exc)
+        log.error("[OAuth] refresh failed: %s", exc)
         return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
-<h2>❌ Client Credentials Grant Failed</h2>
+<h2>❌ Token Refresh Failed</h2>
 <p><b>Error:</b> {exc}</p>
-<p>LucidChart likely does not support <code>client_credentials</code> for this app type.</p>
+<p>You may need to re-authorize via Step 1 above.</p>
 <a href="/auth/lucidchart">← Back to auth page</a>
 </body></html>""", 502
 
     at = tokens.get("access_token", "")
     return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
-<h2>✅ Client Credentials Grant Succeeded</h2>
-<p><b>Access token:</b> {at[:16]}…</p>
+<h2>✅ Token Refreshed</h2>
+<p><b>New access token:</b> {at[:16]}…</p>
 <p>expires_in = {tokens.get('expires_in')} s</p>
 <a href="/auth/lucidchart">← Back to auth page</a>
 </body></html>"""
@@ -575,11 +617,7 @@ def auth_lucidchart_set_token():
     if not access_token:
         return jsonify({"status": "error", "detail": "access_token is required"}), 400
 
-    os.environ["LUCID_ACCESS_TOKEN"] = access_token
-    save_secret("lucid_access_token", access_token)
-    if refresh_token:
-        os.environ["LUCID_REFRESH_TOKEN"] = refresh_token
-        save_secret("lucid_refresh_token", refresh_token)
+    _save_tokens({"access_token": access_token, "refresh_token": refresh_token})
     log.info("[OAuth] Access token manually set & saved to Secret Manager.")
 
     return f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:40px auto">
