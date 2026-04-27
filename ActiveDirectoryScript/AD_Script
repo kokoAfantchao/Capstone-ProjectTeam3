@@ -1,0 +1,585 @@
+ param(
+  [string]$SearchBase = "",
+  [int]$ResultLimit = 0,
+  [string]$DhcpServer = "KSU-DC01-2026",
+  [string]$DnsServer = "KSU-DC01-2026",
+  [string]$DnsZone = "KSUCapstone.local"
+)
+
+$ErrorActionPreference = "Stop"
+
+Import-Module ActiveDirectory -ErrorAction Stop
+
+# Optional modules
+try { Import-Module DhcpServer -ErrorAction Stop; $dhcpModuleLoaded = $true } catch { $dhcpModuleLoaded = $false }
+try { Import-Module DnsServer  -ErrorAction Stop; $dnsModuleLoaded  = $true } catch { $dnsModuleLoaded  = $false }
+
+$OutRoot = Join-Path $PSScriptRoot "data_files"
+Set-Location -Path $PSScriptRoot
+New-Item -ItemType Directory -Force -Path $OutRoot | Out-Null
+
+$runId  = (Get-Date).ToString("yyyyMMdd_HHmmss")
+$stamp  = (Get-Date).ToString("o")
+$runDir = Join-Path $OutRoot $runId
+New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+
+Write-Warning $runDir
+
+# Logging
+$logPath = Join-Path $runDir "export.log"
+function Log([string]$m) {
+  ("[{0}] {1}" -f (Get-Date -Format o), $m) | Tee-Object -FilePath $logPath -Append | Out-Null
+}
+
+# Only show Out-GridView when running interactively
+$IsInteractive = [Environment]::UserInteractive
+
+function Show-GridIfInteractive {
+  param(
+    $rows,
+    [string]$title
+  )
+  if ($IsInteractive -and $rows) {
+    try { $rows | Out-GridView -Title $title } catch {}
+  }
+}
+
+function Write-NdjsonFile {
+  param(
+    [Parameter(Mandatory)]
+    $Rows,
+
+    [Parameter(Mandatory)]
+    [string]$Path
+  )
+
+  $lines = foreach ($row in $Rows) {
+    $row | ConvertTo-Json -Compress -Depth 5
+  }
+
+  [System.IO.File]::WriteAllText(
+    $Path,
+    ($lines -join [Environment]::NewLine),
+    (New-Object System.Text.UTF8Encoding($false))
+  )
+}
+
+Log "RunId=$runId OutRoot=$OutRoot RunDir=$runDir SearchBase='$SearchBase' ResultLimit=$ResultLimit DhcpServer='$DhcpServer' DnsServer='$DnsServer' DnsZone='$DnsZone'"
+
+# Common AD scope
+$common = @{}
+if ($SearchBase -and $SearchBase.Trim() -ne "") { $common["SearchBase"] = $SearchBase }
+
+# ---------------- USERS ----------------
+Log "Querying users..."
+$userProps = @(
+  "objectGUID","objectSid","distinguishedName","samAccountName","userPrincipalName","displayName",
+  "mail","enabled","whenCreated","whenChanged","lastLogonTimestamp"
+)
+
+$users = Get-ADUser -Filter * @common -Properties $userProps
+if ($ResultLimit -gt 0) { $users = $users | Select-Object -First $ResultLimit }
+
+$userRows = foreach ($u in $users) {
+  [pscustomobject]@{
+    run_id               = $runId
+    snapshot_ts          = $stamp
+    object_guid          = $u.ObjectGUID.ToString()
+    object_sid           = $(if ($u.ObjectSid) { $u.ObjectSid.Value } else { "" })
+    dn                   = $u.DistinguishedName
+    sam_account_name     = $u.SamAccountName
+    user_principal_name  = $u.UserPrincipalName
+    display_name         = $u.DisplayName
+    mail                 = $u.Mail
+    enabled              = [bool]$u.Enabled
+    when_created         = $u.WhenCreated
+    when_changed         = $u.WhenChanged
+    last_logon_timestamp = $u.LastLogonTimestamp
+  }
+}
+Show-GridIfInteractive $userRows "AD User"
+$userJson = Join-Path $runDir "user.json"
+$userRows | ConvertTo-Json | Set-Content -Path $userJson -Encoding UTF8
+Log "Users exported: $($userRows.Count) -> $userJson"
+
+# ---------------- GROUPS ----------------
+Log "Querying groupe..."
+$groupProps = @(
+  "objectGUID","objectSid","distinguishedName","samAccountName","name",
+  "groupCategory","groupScope","whenCreated","whenChanged"
+)
+
+$groups = Get-ADGroup -Filter * @common -Properties $groupProps
+if ($ResultLimit -gt 0) { $groups = $groups | Select-Object -First $ResultLimit }
+
+$groupRows = foreach ($g in $groups) {
+  [pscustomobject]@{
+    run_id           = $runId
+    snapshot_ts      = $stamp
+    object_guid      = $g.ObjectGUID.ToString()
+    object_sid       = $(if ($g.ObjectSid) { $g.ObjectSid.Value } else { "" })
+    dn               = $g.DistinguishedName
+    sam_account_name = $g.SamAccountName
+    name             = $g.Name
+    group_category   = $g.GroupCategory
+    group_scope      = $g.GroupScope
+    when_created     = $g.WhenCreated
+    when_changed     = $g.WhenChanged
+  }
+}
+Show-GridIfInteractive $groupRows "AD Groupe"
+$groupJson = Join-Path $runDir "groupe.json"
+$groupRows | ConvertTo-Json | Set-Content -Path $groupJson -Encoding UTF8
+Log "Groups exported: $($groupRows.Count) -> $groupJson"
+
+# ---------------- COMPUTERS ----------------
+Log "Querying computers..."
+$computerProps = @(
+  "objectGUID","objectSid","distinguishedName","samAccountName","name",
+  "operatingSystem","operatingSystemVersion","enabled","whenCreated","whenChanged","dNSHostName"
+)
+
+$computers = Get-ADComputer -Filter * @common -Properties $computerProps
+if ($ResultLimit -gt 0) { $computers = $computers | Select-Object -First $ResultLimit }
+
+$computerRows = foreach ($c in $computers) {
+  [pscustomobject]@{
+    run_id                   = $runId
+    snapshot_ts              = $stamp
+    object_guid              = $c.ObjectGUID.ToString()
+    object_sid               = $(if ($c.ObjectSid) { $c.ObjectSid.Value } else { "" })
+    dn                       = $c.DistinguishedName
+    sam_account_name         = $c.SamAccountName
+    name                     = $c.Name
+    dns_host_name            = $c.DNSHostName
+    operating_system         = $c.OperatingSystem
+    operating_system_version = $c.OperatingSystemVersion
+    enabled                  = [bool]$c.Enabled
+    when_created             = $c.WhenCreated
+    when_changed             = $c.WhenChanged
+  }
+}
+Show-GridIfInteractive $computerRows "AD Computer"
+$computerJson = Join-Path $runDir "computer.json"
+$computerRows | ConvertTo-Json | Set-Content -Path $computerJson -Encoding UTF8
+Log "Computers exported: $($computerRows.Count) -> $computerJson"
+
+# ---------------- AD INSPECT ----------------
+Log "Querying AD inspect data..."
+
+# ---------- Domain ----------
+try {
+  $domain = Get-ADDomain
+
+  $domainRows = @(
+    [pscustomobject]@{
+      run_id                    = $runId
+      snapshot_ts               = $stamp
+      dns_root                  = $domain.DNSRoot
+      netbios_name              = $domain.NetBIOSName
+      distinguished_name        = $domain.DistinguishedName
+      domain_mode               = $domain.DomainMode
+      forest                    = $domain.Forest
+      parent_domain             = $domain.ParentDomain
+      pdc_emulator              = $domain.PDCEmulator
+      rid_master                = $domain.RIDMaster
+      infrastructure_master     = $domain.InfrastructureMaster
+      deleted_objects_container = $domain.DeletedObjectsContainer
+      systems_container         = $domain.SystemsContainer
+      users_container           = $domain.UsersContainer
+      computers_container       = $domain.ComputersContainer
+    }
+  )
+
+  $domainJson = Join-Path $runDir "domain_inspect.json"
+  ConvertTo-Json -InputObject $domainRows | Set-Content -Path $domainJson -Encoding UTF8
+  Log "AD inspect domain exported: $($domainRows.Count) -> $domainJson"
+}
+catch {
+  Log "WARNING: Failed to export domain inspect data. $($_.Exception.Message)"
+}
+
+# ---------- Forest ----------
+try {
+  $forest = Get-ADForest
+
+  $forestRows = @(
+    [pscustomobject]@{
+      run_id                 = $runId
+      snapshot_ts            = $stamp
+      root_domain            = $forest.RootDomain
+      forest_mode            = $forest.ForestMode
+      schema_master          = $forest.SchemaMaster
+      domain_naming_master   = $forest.DomainNamingMaster
+      application_partitions = ($forest.ApplicationPartitions -join ";")
+      domains                = ($forest.Domains -join ";")
+      global_catalogs        = ($forest.GlobalCatalogs -join ";")
+      sites                  = ($forest.Sites -join ";")
+      spn_suffixes           = ($forest.SpnSuffixes -join ";")
+      upn_suffixes           = ($forest.UPNSuffixes -join ";")
+    }
+  )
+
+  $forestJson = Join-Path $runDir "inspect_forest.json"
+  ConvertTo-Json -InputObject $forestRows | Set-Content -Path $forestJson -Encoding UTF8
+  Log "AD inspect forest exported: $($forestRows.Count) -> $forestJson"
+}
+catch {
+  Log "WARNING: Failed to export forest inspect data. $($_.Exception.Message)"
+}
+
+# ---------- Domain Controllers ----------
+try {
+  $dcs = Get-ADDomainController -Filter *
+  if ($ResultLimit -gt 0) { $dcs = $dcs | Select-Object -First $ResultLimit }
+
+  $dcRows = @(foreach ($dc in $dcs) {
+    [pscustomobject]@{
+      run_id                        = $runId
+      snapshot_ts                   = $stamp
+      host_name                     = $dc.HostName
+      name                          = $dc.Name
+      forest                        = $dc.Forest
+      domain                        = $dc.Domain
+      site                          = $dc.Site
+      ipv4_address                  = $dc.IPv4Address
+      ipv6_address                  = $dc.IPv6Address
+      operating_system              = $dc.OperatingSystem
+      operating_system_hotfix       = $dc.OperatingSystemHotfix
+      operating_system_service_pack = $dc.OperatingSystemServicePack
+      is_global_catalog             = $dc.IsGlobalCatalog
+      is_read_only                  = $dc.IsReadOnly
+      enabled                       = $dc.Enabled
+      distinguished_name            = $dc.ComputerObjectDN
+    }
+  })
+
+  Show-GridIfInteractive $dcRows "AD Inspect - Domain Controller"
+  $dcJson = Join-Path $runDir "inspect_domain_controller.json"
+  ConvertTo-Json -InputObject $dcRows | Set-Content -Path $dcJson -Encoding UTF8
+  Log "AD inspect domain controllers exported: $($dcRows.Count) -> $dcJson"
+}
+catch {
+  Log "WARNING: Failed to export domain controller inspect data. $($_.Exception.Message)"
+}
+
+# ---------- Organizational Units ----------
+try {
+  $ouProps = @("objectGUID","distinguishedName","name","whenCreated","whenChanged","gPLink","gPOptions","protectedFromAccidentalDeletion")
+  $ous = Get-ADOrganizationalUnit -Filter * @common -Properties $ouProps
+  if ($ResultLimit -gt 0) { $ous = $ous | Select-Object -First $ResultLimit }
+
+  $ouRows = foreach ($ou in $ous) {
+    [pscustomobject]@{
+      run_id                             = $runId
+      snapshot_ts                        = $stamp
+      object_guid                        = $ou.ObjectGUID.ToString()
+      dn                                 = $ou.DistinguishedName
+      name                               = $ou.Name
+      when_created                       = $ou.WhenCreated
+      when_changed                       = $ou.WhenChanged
+      gp_link                            = $ou.gPLink
+      gp_options                         = $ou.gPOptions
+      protected_from_accidental_deletion = $ou.ProtectedFromAccidentalDeletion
+    }
+  }
+
+  Show-GridIfInteractive $ouRows "AD Inspect - OU"
+  $ouJson = Join-Path $runDir "inspect_ou.json"
+  $ouRows | ConvertTo-Json | Set-Content -Path $ouJson -Encoding UTF8
+  Log "AD inspect OUs exported: $($ouRows.Count) -> $ouJson"
+}
+catch {
+  Log "WARNING: Failed to export OU inspect data. $($_.Exception.Message)"
+}
+
+# ---------- AD Sites ----------
+try {
+  $sites = Get-ADReplicationSite -Filter *
+  if ($ResultLimit -gt 0) { $sites = $sites | Select-Object -First $ResultLimit }
+
+  $siteRows = @(foreach ($site in $sites) {
+    [pscustomobject]@{
+      run_id             = $runId
+      snapshot_ts        = $stamp
+      name               = $site.Name
+      distinguished_name = $site.DistinguishedName
+    }
+  })
+
+  Show-GridIfInteractive $siteRows "AD Inspect - Site"
+  $siteJson = Join-Path $runDir "inspect_site.json"
+  ConvertTo-Json -InputObject $siteRows | Set-Content -Path $siteJson -Encoding UTF8
+  Log "AD inspect sites exported: $($siteRows.Count) -> $siteJson"
+}
+catch {
+  Log "WARNING: Failed to export AD sites inspect data. $($_.Exception.Message)"
+}
+
+# ---------- AD Replication Subnets ----------
+try {
+  $subnets = Get-ADReplicationSubnet -Filter *
+  if ($ResultLimit -gt 0) { $subnets = $subnets | Select-Object -First $ResultLimit }
+
+  $subnetRows = foreach ($subnet in $subnets) {
+    [pscustomobject]@{
+      run_id             = $runId
+      snapshot_ts        = $stamp
+      name               = $subnet.Name
+      site               = $subnet.Site
+      location           = $subnet.Location
+      distinguished_name = $subnet.DistinguishedName
+    }
+  }
+
+  if ($subnetRows) {
+    Show-GridIfInteractive $subnetRows "AD Inspect - Replication Subnet"
+    $subnetJson = Join-Path $runDir "inspect_subnet.json"
+    $subnetRows | ConvertTo-Json | Set-Content -Path $subnetJson -Encoding UTF8
+    Log "AD inspect subnet exported: $($subnetRows.Count) -> $subnetJson"
+  }
+  else {
+    Log "AD replication subnets returned zero rows."
+  }
+}
+catch {
+  Log "WARNING: Failed to export AD subnet inspect data. $($_.Exception.Message)"
+}
+
+# ---------------- DHCP SCOPES (USED AS SUBNETS) ----------------
+try {
+  if ($dhcpModuleLoaded -and $DhcpServer.Trim() -ne "") {
+    Log "Querying DHCP scopes (used as subnets) from server '$DhcpServer'..."
+    $scopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
+    if ($ResultLimit -gt 0) { $scopes = $scopes | Select-Object -First $ResultLimit }
+
+    $dhcpScopeRows = foreach ($scope in $scopes) {
+      [pscustomobject]@{
+        run_id         = $runId
+        snapshot_ts    = $stamp
+        dhcp_server    = $DhcpServer
+        subnet_id      = $scope.ScopeId.IPAddressToString
+        name           = $scope.Name
+        subnet_mask    = $scope.SubnetMask.IPAddressToString
+        state          = $scope.State
+        start_range    = $scope.StartRange.IPAddressToString
+        end_range      = $scope.EndRange.IPAddressToString
+        lease_duration = $scope.LeaseDuration.TotalSeconds
+        description    = $scope.Description
+        extracted_at   = (Get-Date).ToString("o")
+      }
+    }
+
+    Show-GridIfInteractive $dhcpScopeRows "DHCP Scope"
+    $dhcpScopeJson = Join-Path $runDir "dhcp_scope.json"
+    $dhcpScopeRows | ConvertTo-Json | Set-Content -Path $dhcpScopeJson -Encoding UTF8
+    Log "DHCP scope exported: $($dhcpScopeRows.Count) -> $dhcpScopeJson"
+  }
+  else {
+    Log "DHCP scope export skipped. DhcpServer not provided or DhcpServer module not available."
+  }
+}
+catch {
+  Log "WARNING: Failed to export DHCP scopes/subnets data. $($_.Exception.Message)"
+}
+
+# ---------------- DHCP LEASES ----------------
+try {
+  if ($dhcpModuleLoaded -and $DhcpServer.Trim() -ne "") {
+    Log "Querying DHCP leases from server '$DhcpServer'..."
+    $scopes = Get-DhcpServerv4Scope -ComputerName $DhcpServer
+
+    $dhcpRows = foreach ($scope in $scopes) {
+      $leases = Get-DhcpServerv4Lease -ComputerName $DhcpServer -ScopeId $scope.ScopeId
+      if ($ResultLimit -gt 0) { $leases = $leases | Select-Object -First $ResultLimit }
+
+      foreach ($lease in $leases) {
+        [pscustomobject]@{
+          run_id            = $runId
+          snapshot_ts       = $stamp
+          dhcp_server       = $DhcpServer
+          scope_id          = $scope.ScopeId.IPAddressToString
+          scope_name        = $scope.Name
+          ip_address        = $lease.IPAddress.IPAddressToString
+          host_name         = $lease.HostName
+          client_id         = $lease.ClientId
+          address_state     = $lease.AddressState
+          lease_expiry_time = $lease.LeaseExpiryTime
+          dns_registration  = $lease.DnsRegistration
+          dns_name          = $lease.DnsRR
+          description       = $lease.Description
+        }
+      }
+    }
+
+    Show-GridIfInteractive $dhcpRows "DHCP Lease"
+    $dhcpJson = Join-Path $runDir "dhcp_lease.json"
+    $dhcpRows | ConvertTo-Json | Set-Content -Path $dhcpJson -Encoding UTF8
+    Log "DHCP lease exported: $($dhcpRows.Count) -> $dhcpJson"
+  }
+  else {
+    Log "DHCP export skipped. DhcpServer not provided or DhcpServer module not available."
+  }
+}
+catch {
+  Log "WARNING: Failed to export DHCP lease data. $($_.Exception.Message)"
+}
+
+# ---------------- DNS RECORDS ----------------
+try {
+  if ($dnsModuleLoaded -and $DnsServer.Trim() -ne "" -and $DnsZone.Trim() -ne "") {
+    Log "Querying DNS A records from server '$DnsServer' zone '$DnsZone'..."
+    $records = Get-DnsServerResourceRecord -ComputerName $DnsServer -ZoneName $DnsZone -RRType "A"
+    if ($ResultLimit -gt 0) { $records = $records | Select-Object -First $ResultLimit }
+
+    $dnsRows = foreach ($r in $records) {
+      [pscustomobject]@{
+        run_id       = $runId
+        snapshot_ts  = $stamp
+        dns_server   = $DnsServer
+        zone_name    = $DnsZone
+        host_name    = $r.HostName
+        record_type  = $r.RecordType
+        timestamp    = $r.Timestamp
+        time_to_live = $r.TimeToLive.TotalSeconds
+        ipv4_address = $(if ($r.RecordData.IPv4Address) { $r.RecordData.IPv4Address.IPAddressToString } else { "" })
+      }
+    }
+
+    Show-GridIfInteractive $dnsRows "DNS A Record"
+    $dnsJson = Join-Path $runDir "dns_a_record.json"
+    $dnsRows | ConvertTo-Json | Set-Content -Path $dnsJson -Encoding UTF8
+    Log "DNS records exported: $($dnsRows.Count) -> $dnsJson"
+  }
+  else {
+    Log "DNS export skipped. DnsServer/DnsZone not provided or DnsServer module not available."
+  }
+}
+catch {
+  Log "WARNING: Failed to export DNS record data. $($_.Exception.Message)"
+}
+
+# ---------------- FILE VALIDATION ----------------
+$expectedFiles = @(
+  "user.json",
+  "groupe.json",
+  "computer.json",
+  "domain_inspect.json",
+  "inspect_forest.json",
+  "inspect_domain_controller.json",
+  "inspect_ou.json",
+  "inspect_site.json"
+)
+
+if (Test-Path (Join-Path $runDir "inspect_subnet.json")) { $expectedFiles += "inspect_subnet.json" }
+if ($dhcpModuleLoaded -and $DhcpServer.Trim() -ne "") {
+  $expectedFiles += "dhcp_scope.json"
+  $expectedFiles += "dhcp_lease.json"
+}
+if ($dnsModuleLoaded -and $DnsServer.Trim() -ne "" -and $DnsZone.Trim() -ne "") {
+  $expectedFiles += "dns_a_record.json"
+}
+
+foreach ($file in $expectedFiles) {
+  $fullPath = Join-Path $runDir $file
+  if (Test-Path $fullPath) {
+    Log "Validated output file exists: $file"
+  }
+  else {
+    Log "WARNING: Missing expected output file: $file"
+  }
+}
+
+# ---------------- SUMMARY ----------------
+$summaryPath = Join-Path $runDir "export_summary.txt"
+@"
+RunId:     $runId
+Snapshot:  $stamp
+Output:    $runDir
+
+Files:
+- user.json
+- groupe.json
+- computer.json
+- domain_inspect.json
+- inspect_forest.json
+- inspect_domain_controller.json
+- inspect_ou.json
+- inspect_site.json
+- inspect_subnet.json (only if AD replication subnets exist)
+- dhcp_scope.json (used as subnet report)
+- dhcp_lease.json (if DHCP export enabled)
+- dns_a_record.json (if DNS export enabled)
+"@ | Out-File -Encoding UTF8 -FilePath $summaryPath
+
+# ---------------- HTML REPORT ----------------
+try {
+  Log "Generating HTML report..."
+  $htmlPath = Join-Path $runDir "report.html"
+
+  $script:sections = @()
+
+  function Add-HtmlSection {
+    param(
+      [string]$Title,
+      [string]$JsonPath
+    )
+
+    if (Test-Path $JsonPath) {
+      $rows = Get-Content -Path $JsonPath -Raw | ConvertFrom-Json | Select-Object -First 50
+      if ($rows) {
+        $table = $rows | ConvertTo-Html -Fragment
+        $script:sections += "<h2>$Title</h2>$table"
+      }
+      else {
+        $script:sections += "<h2>$Title</h2><p>No rows found.</p>"
+      }
+    }
+    else {
+      $script:sections += "<h2>$Title</h2><p>File not generated.</p>"
+    }
+  }
+
+  Add-HtmlSection -Title "AD User" -JsonPath (Join-Path $runDir "user.json")
+  Add-HtmlSection -Title "AD Groupe" -JsonPath (Join-Path $runDir "groupe.json")
+  Add-HtmlSection -Title "AD Computer" -JsonPath (Join-Path $runDir "computer.json")
+  Add-HtmlSection -Title "AD Domain-inspect" -JsonPath (Join-Path $runDir "domain_inspect.json")
+  Add-HtmlSection -Title "AD Inspect - Forest" -JsonPath (Join-Path $runDir "inspect_forest.json")
+  Add-HtmlSection -Title "AD Inspect - Domain Controller" -JsonPath (Join-Path $runDir "inspect_domain_controller.json")
+  Add-HtmlSection -Title "AD Inspect - OU" -JsonPath (Join-Path $runDir "inspect_ou.json")
+  Add-HtmlSection -Title "AD Inspect - Site" -JsonPath (Join-Path $runDir "inspect_site.json")
+  Add-HtmlSection -Title "AD Inspect - Replication Subnet" -JsonPath (Join-Path $runDir "inspect_subnet.json")
+  Add-HtmlSection -Title "DHCP Scope (Used as Subnets)" -JsonPath (Join-Path $runDir "dhcp_scope.json")
+  Add-HtmlSection -Title "DHCP Lease" -JsonPath (Join-Path $runDir "dhcp_lease.json")
+  Add-HtmlSection -Title "DNS A Record" -JsonPath (Join-Path $runDir "dns_a_record.json")
+
+  $style = @"
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+h1 { color: #1f4e79; }
+h2 { margin-top: 30px; color: #2f75b5; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 12px; }
+th, td { border: 1px solid #d9d9d9; padding: 6px; text-align: left; vertical-align: top; }
+th { background-color: #ddebf7; }
+tr:nth-child(even) { background-color: #f9f9f9; }
+p { color: #666; }
+</style>
+"@
+
+  $body = @"
+<h1>AD Export Report</h1>
+<p><b>Run ID:</b> $runId</p>
+<p><b>Snapshot:</b> $stamp</p>
+<p><b>Output Folder:</b> $runDir</p>
+$($script:sections -join "`n")
+"@
+
+  ConvertTo-Html -Title "AD Export Report" -Head $style -Body $body | Out-File -Encoding UTF8 -FilePath $htmlPath
+  Log "HTML report generated -> $htmlPath"
+}
+catch {
+  Log "WARNING: Failed to generate HTML report. $($_.Exception.Message)"
+}
+
+Log "Export completed."
+#& ".\main.ps1" push-data 
