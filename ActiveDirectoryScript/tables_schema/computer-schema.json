@@ -1,0 +1,67 @@
+[
+  {
+    "name": "run_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "snapshot_ts",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "object_guid",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "object_sid",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "dn",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sam_account_name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "dns_host_name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "operating_system",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "operating_system_version",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "enabled",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "when_created",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "when_changed",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  }
+]
