@@ -234,10 +234,9 @@ processed_events = set()
 def bq_event_listener():
     global latest_event_info # Use global variable to store the latest event info
 
-    if request.method == "POST":
-        # 1. At-Least-Once Delivery check
-        event_id = request.headers.get("ce-id")
-        if event_id:
+    # 1. At-Least-Once Delivery check
+    event_id = request.headers.get("ce-id")
+    if event_id:
             if event_id in processed_events:
                 log.info(f"Skipping duplicate event ID : {event_id}")
                 return jsonify({"status": "Ignored: Duplicate event"}), 200
