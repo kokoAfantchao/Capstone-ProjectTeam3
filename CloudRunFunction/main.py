@@ -319,9 +319,9 @@ def bq_event_listener():
         
         # If protoPayload is present but it's NOT a completed event, ignore it.
         # (If protoPayload is missing, this might be a generic invoke, so we let it proceed)
-        if proto_payload and not is_completed:
-            log.info(f"Skipping job start event: {event_id}")
-            return jsonify({"status": "Ignored: Job not finished."}), 200
+        # if proto_payload and not is_completed:
+        #     log.info(f"Skipping job start event: {event_id}")
+        #     return jsonify({"status": "Ignored: Job not finished."}), 200
     except Exception as e:
         log.warning(f"Failed to parse payload for job completion check: {e}")
 
