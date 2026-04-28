@@ -290,7 +290,7 @@ def get_latest_event():
 # In-memory set to keep track of processed CloudEvent IDs
 processed_events = set()
 
-@app.route("/big-querry/eventlistener", methods=["POST"])
+@app.route("/big-querry/event-listeners", methods=["POST"])
 def bq_event_listener():
     global latest_event_info
 
