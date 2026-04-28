@@ -329,7 +329,7 @@ def bq_event_listener():
     # ── POST: update snapshot tracker then push to LucidChart ──
     try:
         lucid_result = trigger_lucid_import()
-        log.info("[LucidChart] Import complete — %s", lucid_result)
+        log.info("[LucidChart] Import completed — %s", lucid_result)
 
         lucid_imports_history.append({
             "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
