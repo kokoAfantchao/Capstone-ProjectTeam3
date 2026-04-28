@@ -227,9 +227,42 @@ def hello_world():
 def get_latest_event():
     return jsonify(latest_event_info)
 
+# In-memory set to keep track of processed CloudEvent IDs
+processed_events = set()
+
 @app.route("/big-querry/eventlistener", methods=["GET", "POST"])
 def bq_event_listener():
     global latest_event_info # Use global variable to store the latest event info
+
+    if request.method == "POST":
+        # 1. At-Least-Once Delivery check
+        event_id = request.headers.get("ce-id")
+        if event_id:
+            if event_id in processed_events:
+                log.info(f"Skipping duplicate event ID: {event_id}")
+                return jsonify({"status": "Ignored: Duplicate event"}), 200
+            
+            # Add to processed events
+            processed_events.add(event_id)
+            # Prevent map from growing infinitely in memory
+            if len(processed_events) > 1000:
+                # Remove an arbitrary item to keep size capped
+                processed_events.pop()
+
+        # 2. Check for Job Completion (BigQuery specific)
+        if request.is_json:
+            payload = request.get_json()
+            proto_payload = payload.get("protoPayload", {})
+            service_data = proto_payload.get("serviceData", {})
+            
+            # Check if this is a job completed event
+            is_completed = service_data.get("jobCompletedEvent") is not None
+            
+            # If protoPayload is present but it's NOT a completed event, ignore it.
+            if proto_payload and not is_completed:
+                log.info(f"Skipping job start event: {event_id}")
+                return jsonify({"status": "Ignored: Job not finished."}), 200
+
     event_time = datetime.utcnow().isoformat() + "Z"  # ISO format with UTC timezone
     # 2026-03-30 03:50:34.455944 UTC id the time returned from get_latestSnapshot() function
     latest_snapshot = get_latestSnapshot()
@@ -238,6 +271,8 @@ def bq_event_listener():
         "latest_snapshot": latest_snapshot.isoformat() + "Z" if latest_snapshot else None
     }
     latest_event_info = event_data
+
+    return jsonify({"status": "Processed successfully", "data": event_data}), 200
 
 
 if __name__ == "__main__":
