@@ -230,7 +230,7 @@ def get_latest_event():
 # In-memory set to keep track of processed CloudEvent IDs
 processed_events = set()
 
-@app.route("/big-querry/eventlistener", methods=["GET", "POST"])
+@app.route("/big-querry/eventlistener", methods=["POST"])
 def bq_event_listener():
     global latest_event_info # Use global variable to store the latest event info
 
@@ -239,7 +239,7 @@ def bq_event_listener():
         event_id = request.headers.get("ce-id")
         if event_id:
             if event_id in processed_events:
-                log.info(f"Skipping duplicate event ID: {event_id}")
+                log.info(f"Skipping duplicate event ID : {event_id}")
                 return jsonify({"status": "Ignored: Duplicate event"}), 200
             
             # Add to processed events
