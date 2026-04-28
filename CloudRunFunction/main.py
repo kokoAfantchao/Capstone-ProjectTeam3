@@ -287,12 +287,44 @@ def hello_world():
 def get_latest_event():
     return jsonify(latest_event_info)
 
-@app.route("/big-querry/eventlistener", methods=["GET", "POST"])
+# In-memory set to keep track of processed CloudEvent IDs
+processed_events = set()
+
+@app.route("/big-querry/eventlistener", methods=["POST"])
 def bq_event_listener():
     global latest_event_info
 
-    if request.method == "GET":
-        return jsonify({"status": "listening", "latest": latest_event_info}), 200
+    # 1. At-Least-Once Delivery check
+    event_id = request.headers.get("ce-id")
+    if event_id:
+        if event_id in processed_events:
+            log.info(f"Skipping duplicate event ID: {event_id}")
+            return jsonify({"status": "Ignored: Duplicate event"}), 200
+        
+        # Add to processed events (in a production environment, use Redis or a DB)
+        processed_events.add(event_id)
+        # Prevent map from growing infinitely in memory
+        if len(processed_events) > 1000:
+            # Remove an arbitrary item to keep size capped
+            processed_events.pop()
+
+    # 2. Check for Job Completion (BigQuery specific)
+    try:
+        payload = request.get_json(silent=True) or {}
+        proto_payload = payload.get("protoPayload", {})
+        service_data = proto_payload.get("serviceData", {})
+        
+        # Check if this is a job completed event
+        is_completed = service_data.get("jobCompletedEvent") is not None
+        
+        # If protoPayload is present but it's NOT a completed event, ignore it.
+        # (If protoPayload is missing, this might be a generic invoke, so we let it proceed)
+        if proto_payload and not is_completed:
+            log.info(f"Skipping job start event: {event_id}")
+            return jsonify({"status": "Ignored: Job not finished."}), 200
+    except Exception as e:
+        log.warning(f"Failed to parse payload for job completion check: {e}")
+
 
     # ── POST: update snapshot tracker then push to LucidChart ──
     try:
